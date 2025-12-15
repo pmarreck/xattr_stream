@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+exec nix develop -c bash -lc 'make ape >/dev/null && ./tests/test.sh ./bin/xattr_stream_ape.com'
+

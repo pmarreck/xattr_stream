@@ -60,16 +60,20 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
+            bashInteractive
             gcc
             clang
             gnumake
-            cosmoccBin
+            coreutils
+            gnugrep
+            diffutils
           ];
           shellHook = ''
             echo "xattr_stream dev shell"
             echo "  make native"
             echo "  make ape   # Linux x86_64 host only"
             echo "  ./test"
+            export PATH="${cosmoccBin}/bin:$PATH"
           '';
         };
 
@@ -80,4 +84,3 @@
         };
       });
 }
-

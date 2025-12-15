@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BIN="${1:-}"
+if [[ -z "${BIN:-}" || ! -f "$BIN" ]]; then
+	echo "usage: verify_ape <path/to/.com>" >&2
+	exit 2
+fi
+
+need() {
+	command -v "$1" >/dev/null 2>&1 || { echo "verify_ape: missing dependency: $1" >&2; exit 127; }
+}
+
+need grep
+
+contains_bytes() {
+	local needle="$1"
+	local path="$2"
+	LC_ALL=C grep -aob "$needle" "$path" >/dev/null 2>&1
+}
+
+if ! contains_bytes $'\x7fELF' "$BIN"; then
+	echo "verify_ape: missing ELF magic; not a Linux-capable APE?" >&2
+	exit 1
+fi
+
+if ! contains_bytes $'\xcf\xfa\xed\xfe' "$BIN"; then
+	echo "verify_ape: missing Mach-O 64-bit magic; not a macOS-capable APE?" >&2
+	exit 1
+fi
+
+echo "verify_ape: OK (found ELF + Mach-O markers)"

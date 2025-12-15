@@ -1,4 +1,8 @@
 /bin/*
 !.gitkeep
+!/bin/xattr_stream_ape.com
+/bin/*.dbg
+/bin/*.elf
 .DS_Store
-
+/.direnv/
+/.dirtree-state
