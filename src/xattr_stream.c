@@ -193,10 +193,8 @@ static ssize_t xattr_get_size(const char *path, const char *xname, int nofollow)
 	errno = ENOSYS;
 	return -1;
 #elif defined(__APPLE__)
-	if (nofollow) {
-		return lgetxattr(path, xname, NULL, 0, 0, 0);
-	}
-	return getxattr(path, xname, NULL, 0, 0, 0);
+	int opts = nofollow ? XATTR_NOFOLLOW : 0;
+	return getxattr(path, xname, NULL, 0, 0, opts);
 #else
 	if (nofollow) {
 		return lgetxattr(path, xname, NULL, 0);
@@ -223,10 +221,8 @@ static ssize_t xattr_get(const char *path, const char *xname, int nofollow, void
 	errno = ENOSYS;
 	return -1;
 #elif defined(__APPLE__)
-	if (nofollow) {
-		return lgetxattr(path, xname, buf, len, 0, 0);
-	}
-	return getxattr(path, xname, buf, len, 0, 0);
+	int opts = nofollow ? XATTR_NOFOLLOW : 0;
+	return getxattr(path, xname, buf, len, 0, opts);
 #else
 	if (nofollow) {
 		return lgetxattr(path, xname, buf, len);
@@ -254,10 +250,8 @@ static int xattr_set(const char *path, const char *xname, int nofollow, const vo
 	errno = ENOSYS;
 	return -1;
 #elif defined(__APPLE__)
-	if (nofollow) {
-		return lsetxattr(path, xname, buf, len, 0, 0);
-	}
-	return setxattr(path, xname, buf, len, 0, 0);
+	int opts = nofollow ? XATTR_NOFOLLOW : 0;
+	return setxattr(path, xname, buf, len, 0, opts);
 #else
 	if (nofollow) {
 		return lsetxattr(path, xname, buf, len, 0);
@@ -284,10 +278,8 @@ static int xattr_del(const char *path, const char *xname, int nofollow) {
 	errno = ENOSYS;
 	return -1;
 #elif defined(__APPLE__)
-	if (nofollow) {
-		return lremovexattr(path, xname, 0);
-	}
-	return removexattr(path, xname, 0);
+	int opts = nofollow ? XATTR_NOFOLLOW : 0;
+	return removexattr(path, xname, opts);
 #else
 	if (nofollow) {
 		return lremovexattr(path, xname);
@@ -313,10 +305,8 @@ static ssize_t xattr_list_size(const char *path, int nofollow) {
 	errno = ENOSYS;
 	return -1;
 #elif defined(__APPLE__)
-	if (nofollow) {
-		return llistxattr(path, NULL, 0, 0);
-	}
-	return listxattr(path, NULL, 0, 0);
+	int opts = nofollow ? XATTR_NOFOLLOW : 0;
+	return listxattr(path, NULL, 0, opts);
 #else
 	if (nofollow) {
 		return llistxattr(path, NULL, 0);
@@ -342,10 +332,8 @@ static ssize_t xattr_list(const char *path, int nofollow, char *buf, size_t len)
 	errno = ENOSYS;
 	return -1;
 #elif defined(__APPLE__)
-	if (nofollow) {
-		return llistxattr(path, buf, len, 0);
-	}
-	return listxattr(path, buf, len, 0);
+	int opts = nofollow ? XATTR_NOFOLLOW : 0;
+	return listxattr(path, buf, len, opts);
 #else
 	if (nofollow) {
 		return llistxattr(path, buf, len);
