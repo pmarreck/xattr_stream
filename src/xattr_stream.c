@@ -438,10 +438,12 @@ static void usage(FILE *out) {
 		"  xattr_stream --version\n"
 		"  xattr_stream limits\n"
 		"  xattr_stream [--nofollow] put <path> <xattr_name>\n"
+		"  xattr_stream [--nofollow] set <path> <xattr_name>   (alias for put)\n"
 		"  xattr_stream [--nofollow] get <path> <xattr_name>\n"
 		"  xattr_stream [--nofollow] len <path> <xattr_name>\n"
 		"  xattr_stream [--nofollow] del <path> <xattr_name>\n"
 		"  xattr_stream [--nofollow] lst <path>\n"
+		"  xattr_stream [--nofollow] list <path>              (alias for lst)\n"
 		"\n"
 		"Options:\n"
 		"  --nofollow   operate on symlink itself\n"
@@ -468,6 +470,71 @@ static int cmd_limits(void) {
 
 #if defined(__linux__) && defined(XATTR_SIZE_MAX)
 	limit = (long long)XATTR_SIZE_MAX;
+	printf("%lld\n", limit);
+	return 0;
+#endif
+
+#if defined(__APPLE__)
+	/* Empirical fallback: probe max value size on current filesystem. */
+	const char *path = ".";
+	const char *xname = "com.openai.xattr_stream.limits";
+	char tmpname[] = ".xattr_stream_limits_XXXXXX";
+	int fd = mkstemp(tmpname);
+	if (fd < 0) {
+		print_errno("mkstemp", path, NULL);
+		printf("-1\n");
+		return 0;
+	}
+	close(fd);
+
+	long long lo = 0;
+	long long hi = 1024;
+	const long long cap = 64LL * 1024 * 1024; /* 64MiB best-effort cap */
+	unsigned char *buf = NULL;
+
+	for (;;) {
+		buf = (unsigned char *)malloc((size_t)hi);
+		if (!buf) {
+			break;
+		}
+		if (xattr_set(tmpname, xname, 0, buf, (size_t)hi) != 0) {
+			free(buf);
+			buf = NULL;
+			break;
+		}
+		free(buf);
+		buf = NULL;
+		lo = hi;
+		if (hi >= cap) {
+			break;
+		}
+		hi *= 2;
+		if (hi > cap) hi = cap;
+	}
+
+	if (lo > 0 && hi > lo && lo < cap) {
+		long long left = lo;
+		long long right = hi;
+		while (right - left > 1) {
+			long long mid = left + (right - left) / 2;
+			buf = (unsigned char *)malloc((size_t)mid);
+			if (!buf) break;
+			if (xattr_set(tmpname, xname, 0, buf, (size_t)mid) == 0) {
+				left = mid;
+			} else {
+				right = mid;
+			}
+			free(buf);
+			buf = NULL;
+		}
+		limit = left;
+	} else if (lo > 0) {
+		limit = lo;
+	}
+
+	(void)xattr_del(tmpname, xname, 0);
+	(void)unlink(tmpname);
+
 	printf("%lld\n", limit);
 	return 0;
 #endif
@@ -645,7 +712,7 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	if (strcmp(cmd, "put") == 0) {
+	if (strcmp(cmd, "put") == 0 || strcmp(cmd, "set") == 0) {
 		if (argi + 2 != argc) {
 			usage(stderr);
 			return 2;
@@ -790,7 +857,7 @@ int main(int argc, char **argv) {
 		return 0;
 	}
 
-	if (strcmp(cmd, "lst") == 0) {
+	if (strcmp(cmd, "lst") == 0 || strcmp(cmd, "list") == 0) {
 		if (argi + 1 != argc) {
 			usage(stderr);
 			return 2;

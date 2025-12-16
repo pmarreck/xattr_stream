@@ -84,12 +84,28 @@ test_version() {
 }
 
 test_limits() {
+	setup_tmp
+	local f="$tmpdir/file"
+	: >"$f"
+	local xname
+	xname="$(test_xattr_name)"
+
 	local out err rc
 	out=""; err=""; rc=0
 	capture "$BIN" limits
 	[[ "$rc" -eq 0 ]] || fail "limits: rc=$rc stderr=$err"
 	out="${out%$'\n'}"
 	[[ "$out" =~ ^-?[0-9]+$ ]] || fail "limits: expected integer bytes got: $out"
+
+	# If xattrs are supported on this filesystem, limits should be meaningful.
+	out=""; err=""; rc=0
+	capture "$BIN" len "$f" "$xname"
+	if [[ "$rc" -eq 0 ]]; then
+		capture "$BIN" limits
+		[[ "$rc" -eq 0 ]] || fail "limits (supported fs): rc=$rc stderr=$err"
+		out="${out%$'\n'}"
+		[[ "$out" -ne -1 ]] || fail "limits: expected != -1 on xattr-capable fs"
+	fi
 }
 
 test_linux_default_namespace_warning() {
@@ -177,6 +193,27 @@ test_put_get_roundtrip_binary() {
 	cmp -s "$expected" "$got" || fail "get round-trip mismatch"
 }
 
+test_set_alias_put() {
+	setup_tmp
+	local f="$tmpdir/file"
+	: >"$f"
+
+	local xname
+	xname="$(test_xattr_name)"
+
+	skip_if_xattr_unsupported "$f" "$xname"
+
+	local out err rc
+	out=""; err=""; rc=0
+	capture "$BIN" set "$f" "$xname" <<<"hello"
+	[[ "$rc" -eq 0 ]] || fail "set: expected rc=0 got $rc (stderr=$err)"
+
+	out=""; err=""; rc=0
+	capture "$BIN" get "$f" "$xname"
+	[[ "$rc" -eq 0 ]] || fail "get after set: rc=$rc stderr=$err"
+	[[ "$out" == "hello"* ]] || fail "get after set: expected hello got: $out"
+}
+
 test_del_and_lst() {
 	setup_tmp
 	local f="$tmpdir/file"
@@ -212,6 +249,27 @@ test_del_and_lst() {
 	if printf '%s' "$out" | grep -Fxq "$xname"; then
 		fail "lst after del unexpectedly contains $xname (out=$out)"
 	fi
+}
+
+test_list_alias_lst() {
+	setup_tmp
+	local f="$tmpdir/file"
+	: >"$f"
+
+	local xname
+	xname="$(test_xattr_name)"
+
+	skip_if_xattr_unsupported "$f" "$xname"
+
+	local out err rc
+	out=""; err=""; rc=0
+	capture "$BIN" put "$f" "$xname" <<<"hello"
+	[[ "$rc" -eq 0 ]] || fail "put: rc=$rc stderr=$err"
+
+	out=""; err=""; rc=0
+	capture "$BIN" list "$f"
+	[[ "$rc" -eq 0 ]] || fail "list: rc=$rc stderr=$err"
+	printf '%s' "$out" | grep -Fxq "$xname" || fail "list missing $xname (out=$out)"
 }
 
 test_nofollow_symlink() {
@@ -257,6 +315,8 @@ test_linux_default_namespace_warning
 test_linux_default_namespace_mute
 test_len_missing
 test_put_get_roundtrip_binary
+test_set_alias_put
 test_del_and_lst
+test_list_alias_lst
 test_nofollow_symlink
 echo "TEST SUMMARY: All tests passed"
