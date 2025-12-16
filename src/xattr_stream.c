@@ -140,6 +140,41 @@ static const char *errno_name(int e) {
 	}
 }
 
+static int is_linux_runtime(void) {
+#if defined(__COSMOPOLITAN__)
+	return IsLinux();
+#elif defined(__linux__) && !defined(__APPLE__)
+	return 1;
+#else
+	return 0;
+#endif
+}
+
+static int namespace_warn_enabled(int cli_no_warn) {
+	if (cli_no_warn) return 0;
+	const char *v = getenv("XATTR_STREAM_NO_NAMESPACE_WARN");
+	if (!v || !*v) return 1;
+	if (strcmp(v, "0") == 0) return 1;
+	return 0;
+}
+
+static int xattr_name_has_namespace(const char *xname) {
+	const char *dot = strchr(xname, '.');
+	if (!dot) return 0;
+	return dot != xname;
+}
+
+static char *xattr_name_default_user(const char *xname) {
+	static const char prefix[] = "user.";
+	size_t a = sizeof(prefix) - 1;
+	size_t b = strlen(xname);
+	char *s = (char *)malloc(a + b + 1);
+	if (!s) return NULL;
+	memcpy(s, prefix, a);
+	memcpy(s + a, xname, b + 1);
+	return s;
+}
+
 static int errno_is_missing_xattr(int e) {
 	switch (e) {
 #ifdef ENOATTR
@@ -410,6 +445,11 @@ static void usage(FILE *out) {
 		"\n"
 		"Options:\n"
 		"  --nofollow   operate on symlink itself\n"
+		"  --no-namespace-warn  mute Linux default-namespace warning\n"
+		"\n"
+		"Linux note:\n"
+		"  For put/get/del, if xattr_name has no namespace (no '.'), it defaults to 'user.' and warns.\n"
+		"  Set XATTR_STREAM_NO_NAMESPACE_WARN=1 or pass --no-namespace-warn to mute.\n"
 	);
 }
 
@@ -499,11 +539,16 @@ static int cmd_limits(void) {
 
 int main(int argc, char **argv) {
 	int nofollow = 0;
+	int no_namespace_warn = 0;
 	int argi = 1;
 
 	for (; argi < argc; argi++) {
 		if (strcmp(argv[argi], "--nofollow") == 0) {
 			nofollow = 1;
+			continue;
+		}
+		if (strcmp(argv[argi], "--no-namespace-warn") == 0) {
+			no_namespace_warn = 1;
 			continue;
 		}
 		if (strcmp(argv[argi], "--help") == 0) {
@@ -542,21 +587,61 @@ int main(int argc, char **argv) {
 			return 2;
 		}
 		const char *path = argv[argi++];
-		const char *xname = argv[argi++];
+		const char *xname_in = argv[argi++];
+		const char *xname = xname_in;
+		char *xname_alloc = NULL;
+		if (is_linux_runtime() && !xattr_name_has_namespace(xname_in)) {
+			/* Namespace-agnostic: try user.*, then (root only) other namespaces. */
+			xname_alloc = xattr_name_default_user(xname_in);
+			if (!xname_alloc) {
+				print_errno("malloc", "<mem>", NULL);
+				return 1;
+			}
+			xname = xname_alloc;
+		}
 
 		ssize_t n = xattr_get_size(path, xname, nofollow);
+		if (n < 0 && xname_alloc && errno_is_missing_xattr(errno) && geteuid() == 0) {
+			static const char *const roots[] = { "trusted.", "security.", "system." };
+			free(xname_alloc);
+			xname_alloc = NULL;
+			xname = xname_in;
+			for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+				size_t a = strlen(roots[i]);
+				size_t b = strlen(xname_in);
+				xname_alloc = (char *)malloc(a + b + 1);
+				if (!xname_alloc) {
+					print_errno("malloc", "<mem>", NULL);
+					return 1;
+				}
+				memcpy(xname_alloc, roots[i], a);
+				memcpy(xname_alloc + a, xname_in, b + 1);
+				xname = xname_alloc;
+				n = xattr_get_size(path, xname, nofollow);
+				if (n >= 0 || !errno_is_missing_xattr(errno)) {
+					break;
+				}
+				free(xname_alloc);
+				xname_alloc = NULL;
+				xname = xname_in;
+			}
+		}
 		if (n < 0) {
 			if (errno_is_missing_xattr(errno)) {
 				printf("-1\n");
+				free(xname_alloc);
 				return 0;
 			}
 			print_errno("getxattr", path, xname);
 			if (errno_is_xattr_notsup(errno)) {
+				free(xname_alloc);
 				return 3;
 			}
+			free(xname_alloc);
 			return 1;
 		}
 		printf("%" PRIdMAX "\n", (intmax_t)n);
+		free(xname_alloc);
 		return 0;
 	}
 
@@ -566,12 +651,26 @@ int main(int argc, char **argv) {
 			return 2;
 		}
 		const char *path = argv[argi++];
-		const char *xname = argv[argi++];
+		const char *xname_in = argv[argi++];
+		const char *xname = xname_in;
+		char *xname_alloc = NULL;
+		if (is_linux_runtime() && !xattr_name_has_namespace(xname_in)) {
+			xname_alloc = xattr_name_default_user(xname_in);
+			if (!xname_alloc) {
+				print_errno("malloc", "<mem>", NULL);
+				return 1;
+			}
+			xname = xname_alloc;
+			if (namespace_warn_enabled(no_namespace_warn)) {
+				fprintf(stderr, "xattr_stream: warning: xattr name '%s' missing namespace; using '%s'\n", xname_in, xname);
+			}
+		}
 
 		unsigned char *buf = NULL;
 		size_t len = 0;
 		if (read_all_stdin(&buf, &len) != 0) {
 			print_errno("read", "<stdin>", NULL);
+			free(xname_alloc);
 			return 1;
 		}
 
@@ -579,11 +678,13 @@ int main(int argc, char **argv) {
 		free(buf);
 		if (rc != 0) {
 			print_errno("setxattr", path, xname);
+			free(xname_alloc);
 			if (errno_is_xattr_notsup(errno)) {
 				return 3;
 			}
 			return 1;
 		}
+		free(xname_alloc);
 		return 0;
 	}
 
@@ -593,11 +694,25 @@ int main(int argc, char **argv) {
 			return 2;
 		}
 		const char *path = argv[argi++];
-		const char *xname = argv[argi++];
+		const char *xname_in = argv[argi++];
+		const char *xname = xname_in;
+		char *xname_alloc = NULL;
+		if (is_linux_runtime() && !xattr_name_has_namespace(xname_in)) {
+			xname_alloc = xattr_name_default_user(xname_in);
+			if (!xname_alloc) {
+				print_errno("malloc", "<mem>", NULL);
+				return 1;
+			}
+			xname = xname_alloc;
+			if (namespace_warn_enabled(no_namespace_warn)) {
+				fprintf(stderr, "xattr_stream: warning: xattr name '%s' missing namespace; using '%s'\n", xname_in, xname);
+			}
+		}
 
 		ssize_t n = xattr_get_size(path, xname, nofollow);
 		if (n < 0) {
 			print_errno("getxattr", path, xname);
+			free(xname_alloc);
 			if (errno_is_xattr_notsup(errno)) {
 				return 3;
 			}
@@ -615,12 +730,14 @@ int main(int argc, char **argv) {
 		void *buf = malloc(len);
 		if (!buf) {
 			print_errno("malloc", "<mem>", NULL);
+			free(xname_alloc);
 			return 1;
 		}
 		ssize_t got = xattr_get(path, xname, nofollow, buf, len);
 		if (got < 0) {
 			free(buf);
 			print_errno("getxattr", path, xname);
+			free(xname_alloc);
 			if (errno_is_xattr_notsup(errno)) {
 				return 3;
 			}
@@ -632,6 +749,7 @@ int main(int argc, char **argv) {
 			return 1;
 		}
 		free(buf);
+		free(xname_alloc);
 		return 0;
 	}
 
@@ -641,18 +759,34 @@ int main(int argc, char **argv) {
 			return 2;
 		}
 		const char *path = argv[argi++];
-		const char *xname = argv[argi++];
+		const char *xname_in = argv[argi++];
+		const char *xname = xname_in;
+		char *xname_alloc = NULL;
+		if (is_linux_runtime() && !xattr_name_has_namespace(xname_in)) {
+			xname_alloc = xattr_name_default_user(xname_in);
+			if (!xname_alloc) {
+				print_errno("malloc", "<mem>", NULL);
+				return 1;
+			}
+			xname = xname_alloc;
+			if (namespace_warn_enabled(no_namespace_warn)) {
+				fprintf(stderr, "xattr_stream: warning: xattr name '%s' missing namespace; using '%s'\n", xname_in, xname);
+			}
+		}
 
 		if (xattr_del(path, xname, nofollow) != 0) {
 			if (errno_is_missing_xattr(errno)) {
+				free(xname_alloc);
 				return 0;
 			}
 			print_errno("removexattr", path, xname);
+			free(xname_alloc);
 			if (errno_is_xattr_notsup(errno)) {
 				return 3;
 			}
 			return 1;
 		}
+		free(xname_alloc);
 		return 0;
 	}
 

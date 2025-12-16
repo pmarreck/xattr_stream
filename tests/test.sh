@@ -92,6 +92,43 @@ test_limits() {
 	[[ "$out" =~ ^-?[0-9]+$ ]] || fail "limits: expected integer bytes got: $out"
 }
 
+test_linux_default_namespace_warning() {
+	[[ "$(os_name)" == "Linux" ]] || return 0
+
+	setup_tmp
+	local f="$tmpdir/file"
+	: >"$f"
+	local out err rc
+	out=""; err=""; rc=0
+	capture "$BIN" put "$f" x <<<"hello"
+	[[ "$rc" -eq 0 ]] || fail "linux default namespace put: rc=$rc stderr=$err"
+	[[ "$err" == *"warning"* && "$err" == *"user."* ]] || fail "linux default namespace put: expected warning mentioning user. (stderr=$err)"
+
+	out=""; err=""; rc=0
+	BIN_PATH="$BIN" FILE_PATH="$f" OUTFILE="$tmpdir/got" \
+		capture bash -c '"$BIN_PATH" get "$FILE_PATH" x >"$OUTFILE"'
+	[[ "$rc" -eq 0 ]] || fail "linux default namespace get: rc=$rc stderr=$err"
+	[[ "$err" == *"warning"* && "$err" == *"user."* ]] || fail "linux default namespace get: expected warning mentioning user. (stderr=$err)"
+}
+
+test_linux_default_namespace_mute() {
+	[[ "$(os_name)" == "Linux" ]] || return 0
+
+	setup_tmp
+	local f="$tmpdir/file"
+	: >"$f"
+	local out err rc
+	out=""; err=""; rc=0
+	capture "$BIN" --no-namespace-warn put "$f" x <<<"hello"
+	[[ "$rc" -eq 0 ]] || fail "linux default namespace mute: rc=$rc stderr=$err"
+	[[ -z "${err:-}" ]] || fail "linux default namespace mute: expected no stderr (stderr=$err)"
+
+	out=""; err=""; rc=0
+	XATTR_STREAM_NO_NAMESPACE_WARN=1 capture "$BIN" put "$f" y <<<"hello"
+	[[ "$rc" -eq 0 ]] || fail "linux env mute: rc=$rc stderr=$err"
+	[[ -z "${err:-}" ]] || fail "linux env mute: expected no stderr (stderr=$err)"
+}
+
 test_len_missing() {
 	setup_tmp
 	local f="$tmpdir/file"
@@ -216,6 +253,8 @@ test_nofollow_symlink() {
 test_help
 test_version
 test_limits
+test_linux_default_namespace_warning
+test_linux_default_namespace_mute
 test_len_missing
 test_put_get_roundtrip_binary
 test_del_and_lst
