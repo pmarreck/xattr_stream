@@ -21,3 +21,4 @@ Cross-platform (Linux/macOS) streaming helper for extended attributes (xattrs).
 
 - `put` currently reads all of stdin into RAM before calling `setxattr` (v1 simplicity).
 - `limits` prints a best-effort max xattr value size in bytes for the platform, or `-1` if unknown.
+- `limits` prints a best-effort max xattr value size in bytes (uses `pathconf()` where available; falls back to a probe for APE on macOS).

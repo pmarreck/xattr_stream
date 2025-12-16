@@ -22,12 +22,20 @@ cleanup() {
 trap cleanup EXIT
 
 setup_tmp() {
-	local base="${TMPDIR:-/tmp}"
-	case "$base" in
-		*/) ;;
-		*) base="$base/" ;;
-	esac
-	tmpdir="$(mktemp -d "${base}xattr_stream.XXXXXX")"
+	# mktemp portability notes:
+	# - GNU: supports `--tmpdir` and templates like `mktemp -d --tmpdir prefix.XXXXXX`
+	# - BSD/macOS: supports `-t prefix` and also accepts full-path templates
+	# We try GNU forms first, then BSD fallback.
+	tmpdir="$(
+		mktemp -d --tmpdir xattr_stream.XXXXXX 2>/dev/null || {
+			local base="${TMPDIR:-/tmp}"
+			case "$base" in
+				*/) ;;
+				*) base="$base/" ;;
+			esac
+			mktemp -d "${base}xattr_stream.XXXXXX" 2>/dev/null || mktemp -d -t xattr_stream
+		}
+	)"
 }
 
 os_name() {

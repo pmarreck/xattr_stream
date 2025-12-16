@@ -25,6 +25,7 @@
 #include <sys/types.h>
 #include <sys/xattr.h>
 #if defined(__linux__)
+#include <linux/limits.h>
 #if defined(__has_include)
 #if __has_include(<linux/xattr.h>)
 #include <linux/xattr.h>
@@ -414,11 +415,84 @@ static void usage(FILE *out) {
 
 static int cmd_limits(void) {
 	long long limit = -1;
-#if defined(XATTR_MAXSIZE)
-	limit = (long long)XATTR_MAXSIZE;
-#elif defined(XATTR_SIZE_MAX)
-	limit = (long long)XATTR_SIZE_MAX;
+
+#if defined(_PC_XATTR_SIZE_MAX)
+	errno = 0;
+	long pc = pathconf(".", _PC_XATTR_SIZE_MAX);
+	if (pc > 0) {
+		limit = (long long)pc;
+		printf("%lld\n", limit);
+		return 0;
+	}
 #endif
+
+#if defined(__linux__) && defined(XATTR_SIZE_MAX)
+	limit = (long long)XATTR_SIZE_MAX;
+	printf("%lld\n", limit);
+	return 0;
+#endif
+
+#if defined(__COSMOPOLITAN__)
+	/* Probe-based fallback for APE on macOS where pathconf constants aren't available. */
+	const char *path = ".";
+	const char *xname = IsXnu() ? "com.openai.xattr_stream.limits" : "user.xattr_stream.limits";
+	char tmpname[] = ".xattr_stream_limits_XXXXXX";
+	int fd = mkstemp(tmpname);
+	if (fd < 0) {
+		print_errno("mkstemp", path, NULL);
+		printf("-1\n");
+		return 0;
+	}
+	close(fd);
+
+	long long lo = 0;
+	long long hi = 1024;
+	unsigned char *buf = NULL;
+
+	for (;;) {
+		buf = (unsigned char *)malloc((size_t)hi);
+		if (!buf) {
+			break;
+		}
+		if (xattr_set(tmpname, xname, 0, buf, (size_t)hi) != 0) {
+			free(buf);
+			buf = NULL;
+			break;
+		}
+		free(buf);
+		buf = NULL;
+		lo = hi;
+		if (hi > (1LL << 30)) { /* cap probe at 1GiB to avoid runaway */
+			break;
+		}
+		hi *= 2;
+	}
+
+	if (lo > 0 && hi > lo) {
+		long long left = lo;
+		long long right = hi;
+		while (right - left > 1) {
+			long long mid = left + (right - left) / 2;
+			buf = (unsigned char *)malloc((size_t)mid);
+			if (!buf) break;
+			if (xattr_set(tmpname, xname, 0, buf, (size_t)mid) == 0) {
+				left = mid;
+			} else {
+				right = mid;
+			}
+			free(buf);
+			buf = NULL;
+		}
+		limit = left;
+	}
+
+	(void)xattr_del(tmpname, xname, 0);
+	(void)unlink(tmpname);
+
+	printf("%lld\n", limit);
+	return 0;
+#endif
+
 	printf("%lld\n", limit);
 	return 0;
 }
