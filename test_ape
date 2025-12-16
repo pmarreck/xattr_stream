@@ -4,5 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-exec nix develop -c bash -lc 'make ape >/dev/null && ./tests/test.sh ./bin/xattr_stream_ape.com'
+if [[ -z "${IN_NIX_SHELL:-}" ]]; then
+	exec nix develop -c bash -c './test_ape'
+fi
 
+make ape >/dev/null
+exec ./tests/test.sh ./bin/xattr_stream_ape.com

@@ -73,7 +73,8 @@
             echo "  make native"
             echo "  make ape   # Linux x86_64 host only"
             echo "  ./test"
-            export PATH="${cosmoccBin}/bin:$PATH"
+            # Prefer Nix-provided tools over macOS /usr/bin (notably GNU make).
+            export PATH="${pkgs.gnumake}/bin:${cosmoccBin}/bin:$PATH"
           '';
         };
 

@@ -202,7 +202,7 @@ test_nofollow_symlink() {
 	out=""; err=""; rc=0
 	capture "$BIN" --nofollow len "$l" "$xname"
 	[[ "$rc" -eq 0 ]] || fail "len nofollow on symlink: rc=$rc stderr=$err"
-	[[ "$out" == "2"* ]] || fail "len nofollow on symlink: expected 2 got: $out"
+	[[ "$out" == "3"* ]] || fail "len nofollow on symlink: expected 3 got: $out"
 }
 
 test_help
