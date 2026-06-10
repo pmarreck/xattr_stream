@@ -6,3 +6,5 @@
 .DS_Store
 /.direnv/
 /.dirtree-state
+AGENTS*.md
+CLAUDE*.md
