@@ -54,6 +54,18 @@ taxonomy + race handling), `src/{linux,darwin,windows}.zig` (adapters),
 - [x] Naming: auto-prefix on Linux only; caller-supplied `user.` is refused
       with a Linux-specific reason; CLI warns above 4096 bytes (11:05 EDT)
 - [x] Final durable report to Einstein; original note Trashed (23:42 EDT)
+- [x] Recursive listing (Peter, 2026-09-16 11:24 EDT): `-r/--recurse`,
+      `-d N`/`-d=N`/`--depth N`/`--depth=N` (depth implies recurse),
+      breadth-first default, `--depth-first`; walker in the Zig core over
+      std.Io.Dir, exposed as `xs_walk`, unreadable dirs warn and continue
+      (11:35 EDT)
+- [x] Listing with values: `lst --values` / `dump`; printable single-line
+      UTF-8 as text, else hex; JSON mirrors it; `get` stays raw (11:35 EDT)
+- [ ] Output format review by Peter (columns: [path] name [text|hex value])
+- [ ] Encoding detection beyond UTF-8 (uchardetz) if legacy text values
+      ever matter; hex is the fallback until then
+- [ ] Design only, not building: caching a probed per-filesystem limit
+      keyed by filesystem identity with invalidation (see os_counters)
 
 ## Known limits (documented in README)
 

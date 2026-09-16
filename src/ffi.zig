@@ -228,6 +228,42 @@ pub export fn xs_name_rejection_message(code: c_int) callconv(.c) [*:0]const u8 
 	return xs.names.rejectionMessage(r).ptr;
 }
 
+/// 1 when the bytes are printable single-line UTF-8 (see isDisplayText).
+pub export fn xs_is_display_text(bytes: ?[*]const u8, len: usize) callconv(.c) c_int {
+	const b = slice(bytes, len) orelse return 0;
+	return if (xs.isDisplayText(b)) 1 else 0;
+}
+
+pub const XS_WALK_BREADTH_FIRST: c_int = 0;
+pub const XS_WALK_DEPTH_FIRST: c_int = 1;
+pub const XS_KIND_OTHER: c_int = 0;
+pub const XS_KIND_DIRECTORY: c_int = 1;
+pub const XS_KIND_SYMLINK: c_int = 2;
+
+/// Visitor: return 0 to continue, non-zero to stop. `status` is non-zero on
+/// a second visit of a directory that could not be listed.
+pub const xs_walk_fn = *const fn (userdata: ?*anyopaque, path: [*]const u8, path_len: usize, kind: c_int, depth: u64, status: c_int) callconv(.c) c_int;
+
+const WalkCtx = struct { cb: xs_walk_fn, ud: ?*anyopaque };
+
+fn walkVisit(ctx: *WalkCtx, v: xs.walk.Visit) bool {
+	return ctx.cb(ctx.ud, v.path.ptr, v.path.len, @intFromEnum(v.kind), v.depth, @intFromEnum(v.status)) == 0;
+}
+
+/// Walk a tree in breadth-first (0) or depth-first (1) order, children in
+/// bytewise order, symlinks visited but never entered. `max_depth` < 0 means
+/// unlimited; 0 visits `path` alone. Returns XS_OK, or the status of the
+/// root when it cannot be inspected at all.
+pub export fn xs_walk(path: ?[*]const u8, path_len: usize, order: c_int, max_depth: i64, cb: ?xs_walk_fn, userdata: ?*anyopaque) callconv(.c) c_int {
+	const p = slice(path, path_len) orelse return XS_INVALID_PATH;
+	const f = cb orelse return XS_INVALID_ARGUMENT;
+	const ord: xs.walk.Order = if (order == XS_WALK_DEPTH_FIRST) .depth_first else .breadth_first;
+	const depth: ?usize = if (max_depth < 0) null else @intCast(max_depth);
+	var ctx = WalkCtx{ .cb = f, .ud = userdata };
+	xs.walk.walk(xs.walk.FsLister, ffi_allocator, p, .{ .order = ord, .max_depth = depth }, &ctx, walkVisit) catch |e| return status(e);
+	return XS_OK;
+}
+
 pub export fn xs_status_name(s: c_int) callconv(.c) [*:0]const u8 {
 	return xs.statusName(s).ptr;
 }

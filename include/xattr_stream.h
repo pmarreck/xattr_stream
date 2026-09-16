@@ -169,6 +169,34 @@ const char *xs_name_rejection_name(int rejection);
 /* One-sentence human explanation of a rejection. Static. */
 const char *xs_name_rejection_message(int rejection);
 
+/*
+ * Display heuristic for listings: 1 when bytes are valid UTF-8 with no control
+ * characters other than TAB (single-line, printable), else 0. Advisory.
+ */
+int xs_is_display_text(const void *bytes, size_t len);
+
+/* Tree traversal for recursive listings. */
+enum { XS_WALK_BREADTH_FIRST = 0, XS_WALK_DEPTH_FIRST = 1 };
+enum { XS_KIND_OTHER = 0, XS_KIND_DIRECTORY = 1, XS_KIND_SYMLINK = 2 };
+
+/*
+ * Called once per visited path (not NUL-terminated). Return 0 to continue,
+ * non-zero to stop. A directory that cannot be listed is reported by a second
+ * call for the same path with a non-zero status (an xs_status); the walk then
+ * continues with its siblings.
+ */
+typedef int (*xs_walk_fn)(void *userdata, const char *path, size_t path_len,
+                          int kind, uint64_t depth, int status);
+
+/*
+ * Walk path: breadth-first or depth-first pre-order, children in bytewise
+ * order, symlinks visited but never entered (so loops cannot recurse).
+ * max_depth < 0 is unlimited; 0 visits path alone. Returns XS_OK, or the
+ * status of the root when it cannot be inspected at all.
+ */
+xs_status xs_walk(const char *path, size_t path_len, int order, int64_t max_depth,
+                  xs_walk_fn cb, void *userdata);
+
 /* "XS_MISSING" etc.; "XS_UNKNOWN" for values outside the enum. Static. */
 const char *xs_status_name(int status);
 

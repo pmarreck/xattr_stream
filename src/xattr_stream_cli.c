@@ -43,6 +43,10 @@ typedef struct {
 	xs_options xs;
 	int json;
 	int quiet;
+	int recurse;
+	int64_t max_depth; /* -1 = unlimited; 0 = the path alone */
+	int depth_first;
+	int values;
 } cli_opts;
 
 static int exit_for(int status) {
@@ -86,6 +90,7 @@ static void usage(FILE *out) {
 		"  " PROG " [options] len <path> <name>       byte length, or -1 if missing\n"
 		"  " PROG " [options] del <path> <name>       delete (no error if missing)\n"
 		"  " PROG " [options] lst|list <path>         names, one per line\n"
+		"  " PROG " [options] dump <path>             names and values (alias: lst --values)\n"
 		"  " PROG " [options] limits [<path>]         max value bytes on that filesystem, or -1\n"
 		"  " PROG " --help | -h | --version | --about\n"
 		"\n"
@@ -96,6 +101,15 @@ static void usage(FILE *out) {
 		"                  smallest OS ceiling; macOS and NTFS allow more)\n"
 		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr\n"
 		"  --quiet         suppress warnings (e.g. values over 4096 bytes)\n"
+		"  -r, --recurse   lst/dump: walk the tree below <path>, breadth-first\n"
+		"  -d, --depth <n> lst/dump: limit the walk to n levels (0 = <path> alone);\n"
+		"                  implies --recurse; also -d=<n> / --depth=<n>\n"
+		"  --depth-first   lst/dump: walk depth-first (pre-order) instead\n"
+		"  --values        lst: show values; printable UTF-8 as text, else as hex\n"
+		"\n"
+		"Listing columns are tab-separated: [path] name [text|hex value]. The path\n"
+		"column appears when recursing; the value columns with --values/dump.\n"
+		"Children are visited in bytewise order; symlinks are listed but never entered.\n"
 		"\n"
 		"Names: 1..127 bytes UTF-8, no control chars or / \\ : * ? \" < > |, no\n"
 		"leading/trailing space or trailing dot, not $..., com.apple..., Zone.Identifier,\n"
@@ -278,31 +292,145 @@ static int cmd_del(const cli_opts *o, const char *path, const char *name) {
 	return exit_for(st);
 }
 
-static int cmd_lst(const cli_opts *o, const char *path) {
-	xs_buffer b = {0};
+/* ---- listing (single path or walked tree) -------------------------------- */
+
+typedef struct {
+	const cli_opts *o;
+	int json_first;
+	int failures;
+} lst_ctx;
+
+static void print_hex(FILE *out, const unsigned char *p, size_t n) {
+	static const char hx[] = "0123456789abcdef";
+	for (size_t i = 0; i < n; i++) {
+		fputc(hx[p[i] >> 4], out);
+		fputc(hx[p[i] & 15], out);
+	}
+}
+
+static void warn_path(lst_ctx *c, const char *path, size_t path_len, const unsigned char *name, size_t name_len, int status) {
+	c->failures++;
+	if (c->o->quiet) return;
+	const char *sname = xs_status_name(status);
+	if (c->o->json) {
+		fputs("{\"warning\":", stderr);
+		json_string(stderr, (const unsigned char *)sname, strlen(sname));
+		fputs(",\"path\":", stderr);
+		json_string(stderr, (const unsigned char *)path, path_len);
+		if (name) {
+			fputs(",\"name\":", stderr);
+			json_string(stderr, name, name_len);
+		}
+		fprintf(stderr, ",\"os_error\":%" PRId32 ",\"message\":", xs_last_os_error());
+		json_string(stderr, (const unsigned char *)explain(status), strlen(explain(status)));
+		fputs("}\n", stderr);
+	} else {
+		fprintf(stderr, PROG ": warning: %.*s%s%.*s: %s: %s (os error %" PRId32 ")\n",
+			(int)path_len, path, name ? ": " : "", name ? (int)name_len : 0, name ? (const char *)name : "",
+			sname, explain(status), xs_last_os_error());
+	}
+}
+
+static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsigned char *name, size_t name_len) {
+	const cli_opts *o = c->o;
+	xs_buffer v = {0};
+	int is_text = 0;
+	if (o->values) {
+		int st = xs_get(path, path_len, (const char *)name, name_len, &o->xs, &v);
+		if (st != XS_OK) {
+			warn_path(c, path, path_len, name, name_len, st);
+			return;
+		}
+		is_text = xs_is_display_text(v.data, v.len);
+	}
+	if (o->json) {
+		if (!c->json_first) fputc(',', stdout);
+		c->json_first = 0;
+		if (!o->recurse && !o->values) {
+			json_string(stdout, name, name_len); /* plain ["a","b"] form */
+		} else {
+			fputc('{', stdout);
+			if (o->recurse) {
+				fputs("\"path\":", stdout);
+				json_string(stdout, (const unsigned char *)path, path_len);
+				fputc(',', stdout);
+			}
+			fputs("\"name\":", stdout);
+			json_string(stdout, name, name_len);
+			if (o->values) {
+				fputs(is_text ? ",\"text\":" : ",\"hex\":", stdout);
+				if (is_text) {
+					json_string(stdout, v.data, v.len);
+				} else {
+					fputc('"', stdout);
+					print_hex(stdout, v.data, v.len);
+					fputc('"', stdout);
+				}
+			}
+			fputc('}', stdout);
+		}
+	} else {
+		if (o->recurse) {
+			fwrite(path, 1, path_len, stdout);
+			fputc('\t', stdout);
+		}
+		fwrite(name, 1, name_len, stdout);
+		if (o->values) {
+			fputs(is_text ? "\ttext\t" : "\thex\t", stdout);
+			if (is_text) fwrite(v.data, 1, v.len, stdout);
+			else print_hex(stdout, v.data, v.len);
+		}
+		fputc('\n', stdout);
+	}
+	if (o->values) xs_buffer_free(&v);
+}
+
+static int list_one(lst_ctx *c, const char *path, size_t path_len) {
+	xs_buffer names = {0};
 	size_t count = 0;
-	int st = xs_list(path, strlen(path), &o->xs, &b, &count);
+	int st = xs_list(path, path_len, &c->o->xs, &names, &count);
+	if (st != XS_OK) return st;
+	const unsigned char *p = names.data;
+	size_t off = 0;
+	for (size_t i = 0; i < count; i++) {
+		size_t n = strlen((const char *)p + off);
+		emit_entry(c, path, path_len, p + off, n);
+		off += n + 1;
+	}
+	xs_buffer_free(&names);
+	return XS_OK;
+}
+
+static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64_t depth, int status) {
+	lst_ctx *c = (lst_ctx *)ud;
+	(void)kind;
+	(void)depth;
+	if (status != XS_OK) {
+		warn_path(c, path, path_len, NULL, 0, status);
+		return 0;
+	}
+	int st = list_one(c, path, path_len);
+	if (st != XS_OK) warn_path(c, path, path_len, NULL, 0, st);
+	return 0;
+}
+
+static int cmd_lst(const cli_opts *o, const char *path) {
+	lst_ctx c = { o, 1, 0 };
+	if (o->json) fputc('[', stdout);
+	int st;
+	if (o->recurse) {
+		st = xs_walk(path, strlen(path), o->depth_first ? XS_WALK_DEPTH_FIRST : XS_WALK_BREADTH_FIRST,
+			o->max_depth, walk_cb, &c);
+	} else {
+		st = list_one(&c, path, strlen(path));
+	}
+	if (o->json) fputs("]\n", stdout);
 	if (st != XS_OK) {
 		report(o, "lst", path, NULL, st);
 		return exit_for(st);
 	}
-	const unsigned char *p = b.data;
-	size_t off = 0;
-	if (o->json) fputc('[', stdout);
-	for (size_t i = 0; i < count; i++) {
-		size_t n = strlen((const char *)p + off);
-		if (o->json) {
-			if (i) fputc(',', stdout);
-			json_string(stdout, p + off, n);
-		} else {
-			fwrite(p + off, 1, n, stdout);
-			fputc('\n', stdout);
-		}
-		off += n + 1;
-	}
-	if (o->json) fputs("]\n", stdout);
-	xs_buffer_free(&b);
-	return fflush(stdout) == 0 ? EXIT_OK : EXIT_ERROR;
+	if (fflush(stdout) != 0) return EXIT_ERROR;
+	return c.failures ? EXIT_ERROR : EXIT_OK;
 }
 
 static int cmd_limits(const cli_opts *o, const char *path) {
@@ -316,6 +444,7 @@ int main(int argc, char **argv) {
 	cli_opts o;
 	memset(&o, 0, sizeof o);
 	o.xs.max_value_len = DEFAULT_LIMIT;
+	o.max_depth = -1;
 
 	const char *pos[3] = {0};
 	int npos = 0;
@@ -336,6 +465,24 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--raw") == 0) { o.xs.flags |= XS_FLAG_RAW_NAMES; continue; }
 			if (strcmp(a, "--json") == 0) { o.json = 1; continue; }
 			if (strcmp(a, "--quiet") == 0) { o.quiet = 1; continue; }
+			if (strcmp(a, "-r") == 0 || strcmp(a, "--recurse") == 0) { o.recurse = 1; continue; }
+			if (strcmp(a, "--depth-first") == 0) { o.depth_first = 1; continue; }
+			if (strcmp(a, "--values") == 0) { o.values = 1; continue; }
+			if (strcmp(a, "-d") == 0 || strcmp(a, "--depth") == 0 ||
+			    strncmp(a, "-d=", 3) == 0 || strncmp(a, "--depth=", 8) == 0) {
+				const char *num = strchr(a, '=');
+				if (num) num++;
+				else if (i + 1 < argc) num = argv[++i];
+				uint64_t d = 0;
+				if (parse_u64(num, &d) != 0 || d > INT64_MAX) {
+					fprintf(stderr, PROG ": --depth needs a non-negative integer\n");
+					usage(stderr);
+					return EXIT_USAGE;
+				}
+				o.max_depth = (int64_t)d;
+				o.recurse = 1;
+				continue;
+			}
 			if (strcmp(a, "--limit") == 0) {
 				if (i + 1 >= argc || parse_u64(argv[++i], &o.xs.max_value_len) != 0) {
 					fprintf(stderr, PROG ": --limit needs a non-negative integer\n");
@@ -372,8 +519,9 @@ int main(int argc, char **argv) {
 		if (nargs != 2) { usage(stderr); return EXIT_USAGE; }
 		return cmd_del(&o, pos[1], pos[2]);
 	}
-	if (strcmp(cmd, "lst") == 0 || strcmp(cmd, "list") == 0) {
+	if (strcmp(cmd, "lst") == 0 || strcmp(cmd, "list") == 0 || strcmp(cmd, "dump") == 0) {
 		if (nargs != 1) { usage(stderr); return EXIT_USAGE; }
+		if (strcmp(cmd, "dump") == 0) o.values = 1;
 		return cmd_lst(&o, pos[1]);
 	}
 	if (strcmp(cmd, "limits") == 0) {

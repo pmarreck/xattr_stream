@@ -406,3 +406,10 @@ test "packLogical: native listing is filtered to logical names and sorted bytewi
 	defer e.deinit(alloc);
 	try expectEqual(@as(usize, 0), e.count);
 }
+
+test "isDisplayText: printable UTF-8 (tabs allowed) is text; anything else is shown as hex" {
+	const text = [_][]const u8{ "hello", "", "tab\there", "ünï", "0x41 looks like hex but is text", "  spaces  " };
+	for (text) |t| try expect(xs.isDisplayText(t));
+	const binary = [_][]const u8{ "a\nb", "a\r\nb", "\xff", "\x00", "a\x00b", "\x7f", "\x1b[31m", "\xc3" };
+	for (binary) |b| try expect(!xs.isDisplayText(b));
+}

@@ -142,6 +142,49 @@ test "xs_validate_name reports why a name is rejected, with a Linux-specific mes
 	try expectEqual(@as(usize, 4096), ffi.XS_PORTABLE_VALUE_LEN);
 }
 
+const WalkSink = struct {
+	lines: std.ArrayList(u8) = .empty,
+	fn cb(ud: ?*anyopaque, path: [*]const u8, path_len: usize, kind: c_int, depth: u64, st: c_int) callconv(.c) c_int {
+		const self: *WalkSink = @ptrCast(@alignCast(ud.?));
+		const rel = std.fs.path.basename(path[0..path_len]);
+		const line = std.fmt.allocPrint(alloc, "{d}:{d}:{s}:{d} ", .{ depth, kind, rel, st }) catch unreachable;
+		defer alloc.free(line);
+		self.lines.appendSlice(alloc, line) catch unreachable;
+		return 0;
+	}
+};
+
+test "xs_walk visits a real tree breadth-first with a depth limit; xs_is_display_text classifies bytes" {
+	var fx = try Fixture.init();
+	defer fx.deinit();
+	try fx.tmp.dir.createDirPath(io, "t/a/x");
+	try fx.tmp.dir.createDirPath(io, "t/b");
+	try fx.tmp.dir.writeFile(io, .{ .sub_path = "t/a/x/deep", .data = "" });
+	try fx.tmp.dir.writeFile(io, .{ .sub_path = "t/f1", .data = "" });
+	try fx.tmp.dir.symLink(io, "a", "t/l", .{ .is_directory = true });
+	const base = std.fs.path.dirname(fx.file).?;
+	const root = try std.fs.path.join(alloc, &.{ base, "t" });
+	defer alloc.free(root);
+
+	var sink = WalkSink{};
+	defer sink.lines.deinit(alloc);
+	try expectEqual(ffi.XS_OK, ffi.xs_walk(root.ptr, root.len, ffi.XS_WALK_BREADTH_FIRST, -1, WalkSink.cb, &sink));
+	try expectEqualStrings("0:1:t:0 1:1:a:0 1:1:b:0 1:0:f1:0 1:2:l:0 2:1:x:0 3:0:deep:0 ", sink.lines.items);
+
+	sink.lines.clearRetainingCapacity();
+	try expectEqual(ffi.XS_OK, ffi.xs_walk(root.ptr, root.len, ffi.XS_WALK_DEPTH_FIRST, 1, WalkSink.cb, &sink));
+	try expectEqualStrings("0:1:t:0 1:1:a:0 1:1:b:0 1:0:f1:0 1:2:l:0 ", sink.lines.items);
+
+	const gone = "/definitely/not/here";
+	try expectEqual(ffi.XS_NOT_FOUND, ffi.xs_walk(gone, gone.len, 0, -1, WalkSink.cb, &sink));
+	try expectEqual(ffi.XS_INVALID_ARGUMENT, ffi.xs_walk(root.ptr, root.len, 0, -1, null, null));
+
+	try expectEqual(@as(c_int, 1), ffi.xs_is_display_text("plain\ttext", 10));
+	try expectEqual(@as(c_int, 0), ffi.xs_is_display_text("a\nb", 3));
+	try expectEqual(@as(c_int, 0), ffi.xs_is_display_text("\xff", 1));
+	try expectEqual(@as(c_int, 1), ffi.xs_is_display_text(null, 0));
+}
+
 test "xs_version and xs_target are stable static strings" {
 	try expectEqualStrings("0.2.0", std.mem.span(ffi.xs_version()));
 	const target = std.mem.span(ffi.xs_target());

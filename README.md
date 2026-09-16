@@ -20,14 +20,38 @@ xattr-stream [options] get <path> <name>       value to stdout
 xattr-stream [options] len <path> <name>       byte length, or -1 if missing
 xattr-stream [options] del <path> <name>       delete (no error if missing)
 xattr-stream [options] lst|list <path>         names, one per line, sorted
+xattr-stream [options] dump <path>             names and values (lst --values)
 xattr-stream [options] limits [<path>]         max value bytes on that filesystem, or -1
 xattr-stream --help | -h | --version | --about
 
-  --nofollow   operate on a symlink itself, not its target
-  --raw        native OS names (Linux user.x, macOS com.apple.x, NTFS any stream)
-  --limit <n>  max value size in bytes for put/get (default 65536)
-  --json       JSON on stdout for len/lst/limits, JSON errors on stderr
-  --quiet      suppress warnings
+  --nofollow      operate on a symlink itself, not its target
+  --raw           native OS names (Linux user.x, macOS com.apple.x, NTFS any stream)
+  --limit <n>     max value size in bytes for put/get (default 65536)
+  --json          JSON on stdout for len/lst/limits, JSON errors on stderr
+  --quiet         suppress warnings
+  -r, --recurse   lst/dump: walk the tree below <path>, breadth-first
+  -d, --depth <n> limit the walk to n levels (0 = <path> alone); implies -r
+  --depth-first   walk depth-first (pre-order) instead
+  --values        lst: show values; printable UTF-8 as text, else as hex
+```
+
+Recursive listings print tab-separated columns: `path`, `name`, and with
+`--values` a type column (`text` or `hex`) followed by the value. Text means
+valid UTF-8 with no control characters other than TAB; anything else,
+including multi-line text, is shown as lowercase hex so one line stays one
+attribute. `get` is unaffected and always writes raw bytes. Children are
+visited in bytewise order; symlinks are listed (per the follow policy) but
+never entered, so link loops cannot recurse. A subdirectory that cannot be
+read is reported as a warning and the walk continues, with exit code 1 at
+the end. `--json` produces an array of `{"path","name","text"|"hex"}`
+objects (no `path` when not recursing; plain name strings when neither
+recursing nor showing values).
+
+```sh
+$ xattr-stream dump -r photos
+photos	owner	text	Peter
+photos/2026/beach.jpg	caption	text	sunny day
+photos/2026/beach.jpg	thumb.bin	hex	0001feff
 ```
 
 Options go anywhere; later options override earlier ones; `--` ends options.

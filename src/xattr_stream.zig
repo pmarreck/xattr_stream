@@ -11,6 +11,18 @@ const builtin = @import("builtin");
 pub const names = @import("names.zig");
 
 pub const version = "0.2.0";
+pub const walk = @import("walk.zig");
+
+/// Display heuristic for listings: a value is shown as text when it is valid
+/// UTF-8 with no control characters other than TAB (so it fits on one line
+/// unescaped); everything else, including multi-line text, is shown as hex.
+/// `get` is unaffected and always emits raw bytes.
+pub fn isDisplayText(bytes: []const u8) bool {
+	for (bytes) |c| {
+		if ((c < 0x20 and c != '\t') or c == 0x7f) return false;
+	}
+	return std.unicode.utf8ValidateSlice(bytes);
+}
 
 pub const os: names.Os = switch (builtin.os.tag) {
 	.linux => .linux,
@@ -321,5 +333,6 @@ pub fn limits(path: []const u8) i64 {
 
 test {
 	_ = names;
+	_ = walk;
 	_ = @import("xattr_stream_test.zig");
 }

@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst limits --nofollow --raw --limit --json --quiet --about; do
+for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -216,6 +216,105 @@ assert_rc 0
 [[ "$err" =~ ^\{\"warning\": ]] && pass || fail "json warning: '$err'"
 out=""; err=""; rc=0; capture "$BIN" len "$f" k
 assert_out "4097"
+
+current="recursive listing"
+tree="$tmpdir/tree"
+mkdir -p "$tree/a/x" "$tree/b"
+: >"$tree/a/x/deep"; : >"$tree/a/y"; : >"$tree/b/z"; : >"$tree/f1"
+ln -s a "$tree/l"
+printf 'r' | "$BIN" put "$tree" root.attr
+printf 'A' | "$BIN" put "$tree/a" a.attr
+"$BIN" put "$tree/a/x/deep" deep.attr <"$allbytes"
+printf 'one' | "$BIN" put "$tree/f1" f1.attr
+printf 'two' | "$BIN" put "$tree/f1" f1.other
+"$BIN" put "$tree/b/z" z.attr </dev/null
+bfs="$tree	root.attr
+$tree/a	a.attr
+$tree/f1	f1.attr
+$tree/f1	f1.other
+$tree/l	a.attr
+$tree/b/z	z.attr
+$tree/a/x/deep	deep.attr"
+out=""; err=""; rc=0; capture "$BIN" lst -r "$tree"
+assert_rc 0
+assert_err_empty
+assert_out "$bfs"
+out=""; err=""; rc=0; capture "$BIN" --recurse lst "$tree"
+assert_out "$bfs"
+out=""; err=""; rc=0; capture "$BIN" lst -r --depth-first "$tree"
+assert_out "$tree	root.attr
+$tree/a	a.attr
+$tree/a/x/deep	deep.attr
+$tree/b/z	z.attr
+$tree/f1	f1.attr
+$tree/f1	f1.other
+$tree/l	a.attr"
+# --nofollow: the symlink's own (empty) attribute set, not its target's
+out=""; err=""; rc=0; capture "$BIN" --nofollow lst -r "$tree"
+[[ "$out" != *"$tree/l"* ]] && pass || fail "nofollow recursion should not list the link target's attributes"
+# non-recursive output is unchanged
+out=""; err=""; rc=0; capture "$BIN" lst "$tree/f1"
+assert_out "f1.attr
+f1.other"
+
+current="depth limits"
+d1="$tree	root.attr
+$tree/a	a.attr
+$tree/f1	f1.attr
+$tree/f1	f1.other
+$tree/l	a.attr"
+for form in "-d 1" "-d=1" "--depth 1" "--depth=1"; do
+	# shellcheck disable=SC2086
+	out=""; err=""; rc=0; capture "$BIN" lst $form "$tree"
+	assert_rc 0
+	assert_out "$d1"
+done
+out=""; err=""; rc=0; capture "$BIN" lst -d 0 "$tree"
+assert_out "$tree	root.attr"
+out=""; err=""; rc=0; capture "$BIN" lst -d nope "$tree"
+assert_rc 2
+
+current="values: text or hex"
+out=""; err=""; rc=0; capture "$BIN" lst --values -d 1 "$tree"
+assert_out "$tree	root.attr	text	r
+$tree/a	a.attr	text	A
+$tree/f1	f1.attr	text	one
+$tree/f1	f1.other	text	two
+$tree/l	a.attr	text	A"
+allhex="$(od -An -v -tx1 "$allbytes" | tr -d ' \n')"
+out=""; err=""; rc=0; capture "$BIN" lst --values "$tree/a/x/deep"
+assert_out "deep.attr	hex	$allhex"
+out=""; err=""; rc=0; capture "$BIN" lst --values "$tree/b/z"
+assert_out "z.attr	text	"
+out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
+assert_out "f1.attr	text	one
+f1.other	text	two"
+printf 'multi\nline' | "$BIN" put "$tree/f1" f1.multi
+out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
+assert_out "f1.attr	text	one
+f1.multi	hex	6d756c74690a6c696e65
+f1.other	text	two"
+"$BIN" del "$tree/f1" f1.multi
+
+current="recursive json"
+out=""; err=""; rc=0; capture "$BIN" --json lst -d 1 "$tree"
+assert_rc 0
+assert_out "[{\"path\":\"$tree\",\"name\":\"root.attr\"},{\"path\":\"$tree/a\",\"name\":\"a.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.other\"},{\"path\":\"$tree/l\",\"name\":\"a.attr\"}]"
+out=""; err=""; rc=0; capture "$BIN" --json lst --values "$tree/f1"
+assert_out '[{"name":"f1.attr","text":"one"},{"name":"f1.other","text":"two"}]'
+out=""; err=""; rc=0; capture "$BIN" --json dump "$tree/a/x/deep"
+assert_out "[{\"name\":\"deep.attr\",\"hex\":\"$allhex\"}]"
+
+current="unreadable subdirectory is a warning, not a stop"
+if [[ "$(id -u)" -ne 0 ]]; then
+	chmod 000 "$tree/b"
+	out=""; err=""; rc=0; capture "$BIN" lst -r "$tree"
+	chmod 755 "$tree/b"
+	assert_rc 1
+	assert_err_has "warning"
+	assert_err_has "$tree/b"
+	[[ "$out" == *"deep.attr"* ]] && pass || fail "walk should continue past an unreadable directory"
+fi
 
 current="not found path"
 out=""; err=""; rc=0; capture "$BIN" put "$missing_path" k <<<"v"
