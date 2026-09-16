@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Cross-compiles the library and CLI for every supported target:
+#   x86_64-linux-musl, aarch64-linux-musl, aarch64-macos,
+#   x86_64-windows-gnu, aarch64-windows-gnu
+# Output lands in zig-out/cross/<triple>/{bin,lib}. Cross-compiling proves the
+# code builds for a target; it does not prove it runs there (see README).
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT" || exit 2
+
+nix build .#cross -o result-cross || exit 1
+mkdir -p zig-out
+cp -rf result-cross/. zig-out/
+chmod -R u+w zig-out
+find zig-out/cross -type f | sort

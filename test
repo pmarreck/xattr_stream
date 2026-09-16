@@ -1,14 +1,65 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Runs the whole suite: Zig unit/integration tests, the C CLI over the public
+# header via the Bash suite, and every consumer that has a toolchain here.
+# No `set -e`: failures are accumulated and returned as the exit code.
+set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 2
 
-if [[ -z "${IN_NIX_SHELL:-}" ]]; then
-	exec nix develop -c bash -c './test'
+# Enter the flake's dev shell when the toolchain is not already on PATH. The
+# check is for zig itself rather than IN_NIX_SHELL, because a stale direnv
+# shell from an older flake can set IN_NIX_SHELL without providing zig.
+if ! command -v zig >/dev/null 2>&1 && [[ -z "${XS_TEST_REEXEC:-}" ]] && command -v nix >/dev/null 2>&1; then
+	XS_TEST_REEXEC=1 exec nix develop -c "$ROOT/test" "$@"
 fi
 
-env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u OBJC_INCLUDE_PATH \
-	-u NIX_CFLAGS_COMPILE -u NIX_CFLAGS_LINK -u NIX_LDFLAGS \
-	make native >/dev/null
-exec ./tests/test.sh "$ROOT/bin/xattr_stream"
+failures=0
+step() {
+	local name="$1"
+	shift
+	printf '\n\033[1m== %s\033[0m\n' "$name"
+	if "$@"; then
+		printf '\033[32mok\033[0m %s\n' "$name"
+	else
+		printf '\033[31mFAIL\033[0m %s\n' "$name" >&2
+		failures=$((failures + 1))
+	fi
+}
+
+shared_ext=".so"
+case "$(uname -s)" in
+	Darwin) shared_ext=".dylib" ;;
+	MINGW*|MSYS*|CYGWIN*) shared_ext=".dll" ;;
+esac
+
+step "zig build test" zig build test
+step "zig build" zig build
+step "cli (bash)" bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
+
+consumer_c() {
+	clang -std=c99 -Wall -Wextra -Werror -pedantic -Izig-out/include \
+		-o "$TMPDIR/xs_consumer_c" tests/consumers/c/consumer.c zig-out/lib/libxattr_stream.a && "$TMPDIR/xs_consumer_c"
+}
+consumer_rust() {
+	rustc --edition 2021 -O -L zig-out/lib -o "$TMPDIR/xs_consumer_rs" tests/consumers/rust/consumer.rs && "$TMPDIR/xs_consumer_rs"
+}
+consumer_luajit() {
+	luajit tests/consumers/luajit/consumer.lua "zig-out/lib/libxattr_stream$shared_ext"
+}
+consumer_zig() {
+	(cd tests/consumers/zig && zig build test)
+}
+
+if command -v clang >/dev/null 2>&1; then step "consumer: C (clang)" consumer_c; else echo "skip: clang not found"; fi
+if command -v rustc >/dev/null 2>&1; then step "consumer: Rust" consumer_rust; else echo "skip: rustc not found"; fi
+if command -v luajit >/dev/null 2>&1; then step "consumer: LuaJIT" consumer_luajit; else echo "skip: luajit not found"; fi
+step "consumer: Zig module" consumer_zig
+
+printf '\n'
+if [[ "$failures" -eq 0 ]]; then
+	printf '\033[32mAll test steps passed\033[0m\n'
+else
+	printf '\033[31m%d test step(s) failed\033[0m\n' "$failures" >&2
+fi
+exit "$failures"

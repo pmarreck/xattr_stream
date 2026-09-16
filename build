@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Builds the native library (static + shared), header and CLI with all
+# optimizations via Nix, and mirrors the result into zig-out/ for local use.
+#   ./build          ReleaseFast via `nix build`
+#   ./build --debug  Debug build via the dev shell (announces itself on stderr)
+#   ./build --test   ReleaseSafe build via the dev shell
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT" || exit 2
+
+mode="release"
+for arg in "$@"; do
+	case "$arg" in
+		--debug) mode="debug" ;;
+		--test) mode="safe" ;;
+		-h|--help)
+			sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+			exit 0
+			;;
+		*) echo "build: unknown argument '$arg'" >&2; exit 2 ;;
+	esac
+done
+
+case "$mode" in
+	release)
+		nix build .#default -o result || exit 1
+		mkdir -p zig-out
+		cp -rf result/. zig-out/
+		chmod -R u+w zig-out
+		echo "built: zig-out/bin/xattr-stream, zig-out/lib/, zig-out/include/xattr_stream.h"
+		;;
+	debug)
+		nix develop -c zig build -Doptimize=Debug || exit 1
+		;;
+	safe)
+		nix develop -c zig build -Doptimize=ReleaseSafe || exit 1
+		;;
+esac

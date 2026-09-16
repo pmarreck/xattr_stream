@@ -1,8 +1,12 @@
+/zig-out/
+/.zig-cache/
+/result
+/result-*
+/tests/consumers/zig/zig-out/
+/tests/consumers/zig/.zig-cache/
 /bin/*
-!.gitkeep
+!/bin/.gitkeep
 !/bin/xattr_stream_ape.com
-/bin/*.dbg
-/bin/*.elf
 .DS_Store
 /.direnv/
 /.dirtree-state

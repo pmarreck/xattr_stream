@@ -1,0 +1,10 @@
+.{
+	.name = .xattr_stream_zig_consumer,
+	.version = "0.0.0",
+	.minimum_zig_version = "0.16.0",
+	.fingerprint = 0x714c05029664a539,
+	.dependencies = .{
+		.xattr_stream = .{ .path = "../../.." },
+	},
+	.paths = .{ "build.zig", "build.zig.zon", "consumer.zig" },
+}

@@ -1,0 +1,11 @@
+# Mechatron Prime CI contract for xattr_stream: every attribute is a real
+# output of this repository's flake (see `nix flake show`).
+packages.x86_64-linux.default
+packages.x86_64-linux.cross
+checks.x86_64-linux.test-zig
+checks.x86_64-linux.test-cli
+checks.x86_64-linux.test-cross
+checks.x86_64-linux.test-consumer-c
+checks.x86_64-linux.test-consumer-rust
+checks.x86_64-linux.test-consumer-luajit
+checks.x86_64-linux.test-consumer-zig
