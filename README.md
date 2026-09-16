@@ -56,8 +56,10 @@ values to lowercase hex. Values print in full unless `-w`/`--max-width n`
 is given, which cuts the displayed value after n characters (never inside a
 UTF-8 glyph) and appends `…(N bytes)` with the raw length; JSON is never
 cut. `get` is unaffected and always writes raw bytes. Children are
-visited in bytewise order; symlinks are listed (per the follow policy) but
-never entered, so link loops cannot recurse. A subdirectory that cannot be
+visited in bytewise order and listed as soon as their directory is read,
+which keeps the window for files deleted mid-walk to microseconds and the
+queue proportional to directories rather than files; symlinks are listed
+(per the follow policy) but never entered, so link loops cannot recurse. A subdirectory that cannot be
 read is reported as a warning and the walk continues, with exit code 1 at
 the end. Entries that cannot be found by the time their attributes are
 read, dangling symlinks and files deleted mid-walk (browser caches churn

@@ -131,18 +131,70 @@ test "an unlistable directory is reported in place and the walk continues" {
 	defer FakeTree.deny_b = false;
 	const got = try run("r", .{}, null);
 	defer alloc.free(got);
+	// Children are visited as soon as their directory is read (so a file
+	// deleted mid-walk has a microsecond window, not a whole-level wait);
+	// a directory's listing failure is reported when it is expanded.
 	try expectEqualStrings(
 		\\0 directory r
 		\\1 directory r/a
 		\\1 directory r/b
-		\\1 directory r/b !
 		\\1 other r/f1
 		\\1 symlink r/l
 		\\2 directory r/a/x
 		\\2 other r/a/y
+		\\1 directory r/b !
 		\\3 other r/a/x/deep
 		\\
 	, got);
+}
+
+/// Lister that records the order of children() calls relative to visits,
+/// to prove children are visited before any further directory is read.
+const OrderTree = struct {
+	var log: std.ArrayList(u8) = .empty;
+	pub fn kindOf(path: []const u8) walk.Error!walk.Kind {
+		return if (std.mem.eql(u8, path, "r") or std.mem.eql(u8, path, "r/d1") or std.mem.eql(u8, path, "r/d2")) .directory else .other;
+	}
+	pub fn children(allocator: std.mem.Allocator, path: []const u8) walk.Error![]walk.Entry {
+		const line = std.fmt.allocPrint(alloc, "read {s}\n", .{path}) catch unreachable;
+		defer alloc.free(line);
+		log.appendSlice(alloc, line) catch unreachable;
+		const Raw = struct { name: []const u8, kind: walk.Kind };
+		const raw: []const Raw = if (std.mem.eql(u8, path, "r"))
+			&.{ .{ .name = "d1", .kind = .directory }, .{ .name = "d2", .kind = .directory }, .{ .name = "f", .kind = .other } }
+		else
+			&.{.{ .name = "leaf", .kind = .other }};
+		const out = allocator.alloc(walk.Entry, raw.len) catch return error.OutOfMemory;
+		for (raw, 0..) |r, i| out[i] = .{ .name = allocator.dupe(u8, r.name) catch return error.OutOfMemory, .kind = r.kind };
+		return out;
+	}
+};
+
+test "breadth-first visits every child of a directory before reading the next directory" {
+	OrderTree.log = .empty;
+	defer OrderTree.log.deinit(alloc);
+	const Rec = struct {
+		fn visit(_: *u8, v: walk.Visit) bool {
+			const line = std.fmt.allocPrint(alloc, "visit {s}\n", .{v.path}) catch unreachable;
+			defer alloc.free(line);
+			OrderTree.log.appendSlice(alloc, line) catch unreachable;
+			return true;
+		}
+	};
+	var dummy: u8 = 0;
+	try walk.walk(OrderTree, alloc, "r", .{}, &dummy, Rec.visit);
+	try expectEqualStrings(
+		\\visit r
+		\\read r
+		\\visit r/d1
+		\\visit r/d2
+		\\visit r/f
+		\\read r/d1
+		\\visit r/d1/leaf
+		\\read r/d2
+		\\visit r/d2/leaf
+		\\
+	, OrderTree.log.items);
 }
 
 test "the visitor can stop the walk; a non-directory root is visited alone; a missing root fails" {

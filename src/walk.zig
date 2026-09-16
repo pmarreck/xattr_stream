@@ -53,12 +53,22 @@ pub fn freeEntries(allocator: std.mem.Allocator, entries: []Entry) void {
 /// `children(allocator, path) Error![]Entry` (names allocated with `allocator`).
 pub fn walk(comptime Lister: type, allocator: std.mem.Allocator, root: []const u8, opts: Options, ctx: anytype, comptime visit: fn (@TypeOf(ctx), Visit) bool) Error!void {
 	const root_kind = try Lister.kindOf(root);
+	if (!visit(ctx, .{ .path = root, .kind = root_kind, .depth = 0 })) return;
+	if (root_kind != .directory) return;
+	if (opts.max_depth) |m| if (m == 0) return;
+
+	// Breadth-first: `pending` holds only directories awaiting expansion; every
+	// child is visited the moment its directory is read, which keeps the
+	// window for "deleted between readdir and lookup" races to microseconds
+	// and keeps memory proportional to directories, not files.
+	// Depth-first: `pending` is a stack of nodes visited when popped, giving
+	// classic pre-order.
 	var pending: std.ArrayList(Node) = .empty;
 	defer {
 		for (pending.items) |n| allocator.free(n.path);
 		pending.deinit(allocator);
 	}
-	pending.append(allocator, .{ .path = allocator.dupe(u8, root) catch return error.OutOfMemory, .kind = root_kind, .depth = 0 }) catch return error.OutOfMemory;
+	pending.append(allocator, .{ .path = allocator.dupe(u8, root) catch return error.OutOfMemory, .kind = .directory, .depth = 0 }) catch return error.OutOfMemory;
 	var head: usize = 0;
 
 	while (true) {
@@ -75,9 +85,13 @@ pub fn walk(comptime Lister: type, allocator: std.mem.Allocator, root: []const u
 		// depth-first owns each popped node until the end of this iteration.
 		defer if (opts.order == .depth_first) allocator.free(node.path);
 
-		if (!visit(ctx, .{ .path = node.path, .kind = node.kind, .depth = node.depth })) return;
-		if (node.kind != .directory) continue;
-		if (opts.max_depth) |m| if (node.depth >= m) continue;
+		if (opts.order == .depth_first) {
+			if (node.depth > 0) {
+				if (!visit(ctx, .{ .path = node.path, .kind = node.kind, .depth = node.depth })) return;
+			}
+			if (node.kind != .directory) continue;
+			if (opts.max_depth) |m| if (node.depth >= m) continue;
+		}
 
 		const kids = Lister.children(allocator, node.path) catch |e| {
 			if (!visit(ctx, .{ .path = node.path, .kind = node.kind, .depth = node.depth, .status = core.statusOf(e) })) return;
@@ -85,13 +99,24 @@ pub fn walk(comptime Lister: type, allocator: std.mem.Allocator, root: []const u
 		};
 		defer freeEntries(allocator, kids);
 		std.mem.sort(Entry, kids, {}, entryLess);
+		const child_depth = node.depth + 1;
+		const expand_children = if (opts.max_depth) |m| child_depth < m else true;
 
 		var i: usize = 0;
 		while (i < kids.len) : (i += 1) {
 			// Depth-first pops from the back, so push in reverse to pop ascending.
 			const k = if (opts.order == .depth_first) kids[kids.len - 1 - i] else kids[i];
 			const child_path = std.fs.path.join(allocator, &.{ node.path, k.name }) catch return error.OutOfMemory;
-			pending.append(allocator, .{ .path = child_path, .kind = k.kind, .depth = node.depth + 1 }) catch {
+			if (opts.order == .breadth_first) {
+				const keep = k.kind == .directory and expand_children;
+				defer if (!keep) allocator.free(child_path);
+				if (!visit(ctx, .{ .path = child_path, .kind = k.kind, .depth = child_depth })) {
+					if (keep) allocator.free(child_path);
+					return;
+				}
+				if (!keep) continue;
+			}
+			pending.append(allocator, .{ .path = child_path, .kind = k.kind, .depth = child_depth }) catch {
 				allocator.free(child_path);
 				return error.OutOfMemory;
 			};
