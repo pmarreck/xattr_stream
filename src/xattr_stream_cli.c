@@ -403,13 +403,15 @@ static int list_one(lst_ctx *c, const char *path, size_t path_len) {
 
 static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64_t depth, int status) {
 	lst_ctx *c = (lst_ctx *)ud;
-	(void)kind;
 	(void)depth;
 	if (status != XS_OK) {
 		warn_path(c, path, path_len, NULL, 0, status);
 		return 0;
 	}
 	int st = list_one(c, path, path_len);
+	/* A symlink whose target is gone has nothing to list; that is the link's
+	 * state, not an error in the walk, so it is skipped without noise. */
+	if (st == XS_NOT_FOUND && kind == XS_KIND_SYMLINK) return 0;
 	if (st != XS_OK) warn_path(c, path, path_len, NULL, 0, st);
 	return 0;
 }

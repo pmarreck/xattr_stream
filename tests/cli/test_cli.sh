@@ -305,6 +305,21 @@ assert_out '[{"name":"f1.attr","text":"one"},{"name":"f1.other","text":"two"}]'
 out=""; err=""; rc=0; capture "$BIN" --json dump "$tree/a/x/deep"
 assert_out "[{\"name\":\"deep.attr\",\"hex\":\"$allhex\"}]"
 
+current="dangling symlinks are skipped silently when recursing"
+ln -s does-not-exist "$tree/dangling"
+out=""; err=""; rc=0; capture "$BIN" lst -r "$tree"
+assert_rc 0
+assert_err_empty
+[[ "$out" != *"dangling"* ]] && pass || fail "dangling link should not appear: '$out'"
+# Asked for directly it is still an error, because the caller named it.
+out=""; err=""; rc=0; capture "$BIN" lst "$tree/dangling"
+assert_rc 7
+# With --nofollow the link itself is the subject and has no attributes: no warning either.
+out=""; err=""; rc=0; capture "$BIN" --nofollow lst -r "$tree"
+assert_rc 0
+assert_err_empty
+rm -f "$tree/dangling"
+
 current="unreadable subdirectory is a warning, not a stop"
 if [[ "$(id -u)" -ne 0 ]]; then
 	chmod 000 "$tree/b"
