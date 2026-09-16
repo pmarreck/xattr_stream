@@ -126,6 +126,22 @@ test "options: flags and max_value_len are honoured; NULL means defaults" {
 	try expectEqual(ffi.XS_MISSING, ffi.xs_remove(fx.file.ptr, fx.file.len, "k", 1, null));
 }
 
+test "xs_validate_name reports why a name is rejected, with a Linux-specific message for user." {
+	try expectEqual(ffi.XS_NAME_OK, ffi.xs_validate_name("llc.mecha.probe", 15, null));
+	try expectEqual(ffi.XS_NAME_LINUX_NAMESPACE, ffi.xs_validate_name("user.foo", 8, null));
+	try expectEqual(ffi.XS_NAME_FORBIDDEN_CHAR, ffi.xs_validate_name("a:b", 3, null));
+	try expectEqual(ffi.XS_NAME_EMPTY, ffi.xs_validate_name("", 0, null));
+	try expectEqual(ffi.XS_NAME_RESERVED, ffi.xs_validate_name("Zone.Identifier", 15, null));
+	const msg = std.mem.span(ffi.xs_name_rejection_message(ffi.XS_NAME_LINUX_NAMESPACE));
+	try expect(std.mem.indexOf(u8, msg, "Linux") != null);
+	try expect(std.mem.indexOf(u8, msg, "user.") != null);
+	// Raw mode: only hard limits apply, so user.foo is fine and reported as OK.
+	const raw = ffi.xs_options{ .flags = ffi.XS_FLAG_RAW_NAMES, .max_value_len = 0 };
+	try expectEqual(ffi.XS_NAME_OK, ffi.xs_validate_name("user.foo", 8, &raw));
+	try expectEqual(ffi.XS_NAME_INVALID_NATIVE, ffi.xs_validate_name("", 0, &raw));
+	try expectEqual(@as(usize, 4096), ffi.XS_PORTABLE_VALUE_LEN);
+}
+
 test "xs_version and xs_target are stable static strings" {
 	try expectEqualStrings("0.2.0", std.mem.span(ffi.xs_version()));
 	const target = std.mem.span(ffi.xs_target());

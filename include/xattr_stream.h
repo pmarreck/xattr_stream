@@ -59,6 +59,28 @@ typedef enum xs_status {
 	XS_INVALID_ARGUMENT = 13  /* NULL pointer with nonzero length, or NULL out-param */
 } xs_status;
 
+/*
+ * Values up to this size fit every mainstream filesystem's default
+ * configuration (ext4 without the ea_inode feature keeps all of an inode's
+ * attributes in roughly one 4 KiB block). Advisory: the library does not
+ * enforce it; the CLI warns above it.
+ */
+#define XS_PORTABLE_VALUE_LEN 4096
+
+/* Why a name is unacceptable; see xs_validate_name. Values are frozen. */
+typedef enum xs_name_rejection {
+	XS_NAME_OK                     = 0,
+	XS_NAME_EMPTY                  = 1,
+	XS_NAME_TOO_LONG               = 2, /* over 127 bytes */
+	XS_NAME_CONTROL_CHAR           = 3, /* < 0x20, 0x7f, or NUL */
+	XS_NAME_FORBIDDEN_CHAR         = 4, /* one of / \ : * ? " < > | */
+	XS_NAME_RESERVED               = 5, /* $..., com.apple..., Zone.Identifier */
+	XS_NAME_NOT_UTF8               = 6,
+	XS_NAME_EDGE_WHITESPACE_OR_DOT = 7, /* leading/trailing space, trailing dot */
+	XS_NAME_LINUX_NAMESPACE        = 8, /* starts with user.; the library applies that itself on Linux */
+	XS_NAME_INVALID_NATIVE         = 9  /* raw mode: hard OS limit or path character */
+} xs_name_rejection;
+
 /* Option flags, OR-ed into xs_options.flags. */
 enum {
 	XS_FLAG_NOFOLLOW  = 1u << 0, /* operate on a symlink itself, not its target */
@@ -81,9 +103,11 @@ typedef struct xs_buffer {
  * Logical names (default mode): 1..127 bytes of valid UTF-8, no control
  * characters, none of  / \ : * ? " < > |  , no leading/trailing space, no
  * trailing dot, not starting with '$' or 'com.apple.', not 'Zone.Identifier'
- * (case-insensitive). Linux stores them as user.<name>; macOS and Windows
- * verbatim. Windows stream names are case-insensitive: two logical names
- * differing only in case collide there.
+ * (case-insensitive), and not starting with 'user.' (Linux stores every
+ * logical name as user.<name> itself, so a caller-supplied prefix would become
+ * user.user.<name>). macOS and Windows store the name verbatim. Windows
+ * stream names are case-insensitive: two logical names differing only in
+ * case collide there.
  */
 
 /* Create or replace the attribute value. */
@@ -134,6 +158,16 @@ int64_t xs_limits(const char *path, size_t path_len);
 xs_status xs_native_name(const char *name, size_t name_len,
                          const xs_options *opts,
                          char *out, size_t out_cap, size_t *out_len);
+
+/*
+ * Why a name would be rejected under opts (XS_NAME_OK if acceptable). Pure,
+ * touches no file. Call it after XS_INVALID_NAME to explain the refusal.
+ */
+int xs_validate_name(const char *name, size_t name_len, const xs_options *opts);
+/* "XS_NAME_LINUX_NAMESPACE" etc.; "XS_NAME_UNKNOWN" outside the enum. Static. */
+const char *xs_name_rejection_name(int rejection);
+/* One-sentence human explanation of a rejection. Static. */
+const char *xs_name_rejection_message(int rejection);
 
 /* "XS_MISSING" etc.; "XS_UNKNOWN" for values outside the enum. Static. */
 const char *xs_status_name(int status);

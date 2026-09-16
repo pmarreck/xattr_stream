@@ -18,7 +18,6 @@ const accept_set = [_][]const u8{
 	"with-dash",
 	"ünïcödé",
 	"a" ** names.max_logical_len,
-	"user.foo", // logical names may start with "user." (Linux native becomes user.user.foo)
 	"security.selinux", // logical namespace-looking names are just names
 };
 
@@ -58,6 +57,9 @@ const reject_set = [_]Rejected{
 	.{ .name = "a>b", .why = .forbidden_char },
 	.{ .name = "a|b", .why = .forbidden_char },
 	.{ .name = "..\\x", .why = .forbidden_char },
+	.{ .name = "user.foo", .why = .linux_namespace },
+	.{ .name = "User.Foo", .why = .linux_namespace },
+	.{ .name = "USER.x", .why = .linux_namespace },
 	.{ .name = "$DATA", .why = .reserved },
 	.{ .name = "$foo", .why = .reserved },
 	.{ .name = "Zone.Identifier", .why = .reserved },

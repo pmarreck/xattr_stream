@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst limits --nofollow --raw --limit --json --about; do
+for word in put get len del lst limits --nofollow --raw --limit --json --quiet --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -183,6 +183,39 @@ for n in "a:b" "..\\x" '$DATA' "Zone.Identifier" "com.apple.quarantine" "trailin
 	out=""; err=""; rc=0; capture "$BIN" len "$missing_path" "$n"
 	assert_rc 8
 done
+
+current="user. prefix is reserved for Linux"
+f="$(new_file f5b)"
+out=""; err=""; rc=0; capture "$BIN" put "$f" user.foo <<<"v"
+assert_rc 8
+assert_err_has "XS_INVALID_NAME"
+assert_err_has "Linux"
+assert_err_has "user."
+out=""; err=""; rc=0; capture "$BIN" --json len "$f" user.foo
+assert_rc 8
+[[ "$err" == *'"reason":"XS_NAME_LINUX_NAMESPACE"'* ]] && pass || fail "json error should carry the name rejection reason: '$err'"
+out=""; err=""; rc=0; capture "$BIN" --raw put "$f" "$(native_name rawok)" <<<"v"
+assert_rc 0
+
+current="portability warning above 4096 bytes"
+f="$(new_file f5c)"
+head -c 4096 /dev/zero >"$tmpdir/exact4k"
+head -c 4097 /dev/zero >"$tmpdir/over4k"
+out=""; err=""; rc=0; capture "$BIN" put "$f" k <"$tmpdir/exact4k"
+assert_rc 0
+assert_err_empty
+out=""; err=""; rc=0; capture "$BIN" put "$f" k <"$tmpdir/over4k"
+assert_rc 0
+assert_err_has "warning"
+assert_err_has "4096"
+out=""; err=""; rc=0; capture "$BIN" --quiet put "$f" k <"$tmpdir/over4k"
+assert_rc 0
+assert_err_empty
+out=""; err=""; rc=0; capture "$BIN" --json put "$f" k <"$tmpdir/over4k"
+assert_rc 0
+[[ "$err" =~ ^\{\"warning\": ]] && pass || fail "json warning: '$err'"
+out=""; err=""; rc=0; capture "$BIN" len "$f" k
+assert_out "4097"
 
 current="not found path"
 out=""; err=""; rc=0; capture "$BIN" put "$missing_path" k <<<"v"

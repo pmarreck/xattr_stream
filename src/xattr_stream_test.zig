@@ -167,7 +167,7 @@ test "invalid logical names are rejected by every operation before any OS call" 
 	const f = try fx.path("does-not-exist");
 	defer alloc.free(f);
 	var buf: [8]u8 = undefined;
-	const bad = [_][]const u8{ "", "a:b", "..\\x", "$DATA", "Zone.Identifier", "com.apple.quarantine", "a\x00b", "trailing." };
+	const bad = [_][]const u8{ "", "a:b", "..\\x", "user.foo", "$DATA", "Zone.Identifier", "com.apple.quarantine", "a\x00b", "trailing." };
 	for (bad) |n| {
 		try expectError(error.InvalidName, xs.set(f, n, "v", .{}));
 		try expectError(error.InvalidName, xs.size(f, n, .{}));

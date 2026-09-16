@@ -27,6 +27,53 @@ pub const XS_INVALID_ARGUMENT: c_int = 13;
 /// Mirrors XS_DEFAULT_MAX_VALUE_LEN in the header.
 pub const XS_DEFAULT_MAX_VALUE_LEN: usize = xs.default_max_value_len;
 
+/// Values up to this size fit every mainstream filesystem's default
+/// configuration (ext4 without ea_inode holds about one 4 KiB block of
+/// attributes per inode). Advisory; the CLI warns above it.
+pub const XS_PORTABLE_VALUE_LEN: usize = 4096;
+
+// Name rejection reasons, mirrored by `enum xs_name_rejection` in the header.
+pub const XS_NAME_OK: c_int = 0;
+pub const XS_NAME_EMPTY: c_int = 1;
+pub const XS_NAME_TOO_LONG: c_int = 2;
+pub const XS_NAME_CONTROL_CHAR: c_int = 3;
+pub const XS_NAME_FORBIDDEN_CHAR: c_int = 4;
+pub const XS_NAME_RESERVED: c_int = 5;
+pub const XS_NAME_NOT_UTF8: c_int = 6;
+pub const XS_NAME_EDGE_WHITESPACE_OR_DOT: c_int = 7;
+pub const XS_NAME_LINUX_NAMESPACE: c_int = 8;
+pub const XS_NAME_INVALID_NATIVE: c_int = 9;
+
+fn rejectionCode(r: ?xs.names.Rejection) c_int {
+	const rej = r orelse return XS_NAME_OK;
+	return switch (rej) {
+		.empty => XS_NAME_EMPTY,
+		.too_long => XS_NAME_TOO_LONG,
+		.control_char => XS_NAME_CONTROL_CHAR,
+		.forbidden_char => XS_NAME_FORBIDDEN_CHAR,
+		.reserved => XS_NAME_RESERVED,
+		.not_utf8 => XS_NAME_NOT_UTF8,
+		.edge_whitespace_or_dot => XS_NAME_EDGE_WHITESPACE_OR_DOT,
+		.linux_namespace => XS_NAME_LINUX_NAMESPACE,
+		.invalid_native => XS_NAME_INVALID_NATIVE,
+	};
+}
+
+fn rejectionFromCode(code: c_int) ?xs.names.Rejection {
+	return switch (code) {
+		XS_NAME_EMPTY => .empty,
+		XS_NAME_TOO_LONG => .too_long,
+		XS_NAME_CONTROL_CHAR => .control_char,
+		XS_NAME_FORBIDDEN_CHAR => .forbidden_char,
+		XS_NAME_RESERVED => .reserved,
+		XS_NAME_NOT_UTF8 => .not_utf8,
+		XS_NAME_EDGE_WHITESPACE_OR_DOT => .edge_whitespace_or_dot,
+		XS_NAME_LINUX_NAMESPACE => .linux_namespace,
+		XS_NAME_INVALID_NATIVE => .invalid_native,
+		else => null,
+	};
+}
+
 pub const XS_FLAG_NOFOLLOW: u32 = 1 << 0;
 pub const XS_FLAG_RAW_NAMES: u32 = 1 << 1;
 
@@ -150,6 +197,35 @@ pub export fn xs_native_name(name: ?[*]const u8, name_len: usize, opts: ?*const 
 	@memcpy(dst[0..native.len], native);
 	dst[native.len] = 0;
 	return XS_OK;
+}
+
+/// Why a name would be rejected under `opts`, as an xs_name_rejection code
+/// (XS_NAME_OK when acceptable). Pure; touches no file.
+pub export fn xs_validate_name(name: ?[*]const u8, name_len: usize, opts: ?*const xs_options) callconv(.c) c_int {
+	const n = slice(name, name_len) orelse return XS_NAME_INVALID_NATIVE;
+	const o = optionsFrom(opts);
+	return rejectionCode(xs.names.classify(xs.os, n, .{ .raw = o.raw_names }));
+}
+
+pub export fn xs_name_rejection_name(code: c_int) callconv(.c) [*:0]const u8 {
+	return switch (code) {
+		XS_NAME_OK => "XS_NAME_OK",
+		XS_NAME_EMPTY => "XS_NAME_EMPTY",
+		XS_NAME_TOO_LONG => "XS_NAME_TOO_LONG",
+		XS_NAME_CONTROL_CHAR => "XS_NAME_CONTROL_CHAR",
+		XS_NAME_FORBIDDEN_CHAR => "XS_NAME_FORBIDDEN_CHAR",
+		XS_NAME_RESERVED => "XS_NAME_RESERVED",
+		XS_NAME_NOT_UTF8 => "XS_NAME_NOT_UTF8",
+		XS_NAME_EDGE_WHITESPACE_OR_DOT => "XS_NAME_EDGE_WHITESPACE_OR_DOT",
+		XS_NAME_LINUX_NAMESPACE => "XS_NAME_LINUX_NAMESPACE",
+		XS_NAME_INVALID_NATIVE => "XS_NAME_INVALID_NATIVE",
+		else => "XS_NAME_UNKNOWN",
+	};
+}
+
+pub export fn xs_name_rejection_message(code: c_int) callconv(.c) [*:0]const u8 {
+	const r = rejectionFromCode(code) orelse return if (code == XS_NAME_OK) "name is acceptable" else "unknown name rejection code";
+	return xs.names.rejectionMessage(r).ptr;
 }
 
 pub export fn xs_status_name(s: c_int) callconv(.c) [*:0]const u8 {

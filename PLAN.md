@@ -51,8 +51,8 @@ taxonomy + race handling), `src/{linux,darwin,windows}.zig` (adapters),
 - [x] Delete bin/xattr_stream_ape.com (Peter's call, 2026-09-16 10:30 EDT;
       copy in ~/.Trash); commit AGENTS.md symlink + jj_cheatsheet removal
 - [x] Default value bound = 64 KiB on every OS (min of the OS maxima)
-- [ ] Naming model decision pending Peter: explicit `user.` everywhere vs
-      auto-prefix on Linux only (see reply of 2026-09-16)
+- [x] Naming: auto-prefix on Linux only; caller-supplied `user.` is refused
+      with a Linux-specific reason; CLI warns above 4096 bytes (11:05 EDT)
 - [x] Final durable report to Einstein; original note Trashed (23:42 EDT)
 
 ## Known limits (documented in README)

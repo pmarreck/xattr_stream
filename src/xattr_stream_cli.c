@@ -42,6 +42,7 @@ enum {
 typedef struct {
 	xs_options xs;
 	int json;
+	int quiet;
 } cli_opts;
 
 static int exit_for(int status) {
@@ -94,10 +95,14 @@ static void usage(FILE *out) {
 		"  --limit <n>     max value size in bytes for put/get (default 65536, the\n"
 		"                  smallest OS ceiling; macOS and NTFS allow more)\n"
 		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr\n"
+		"  --quiet         suppress warnings (e.g. values over 4096 bytes)\n"
 		"\n"
 		"Names: 1..127 bytes UTF-8, no control chars or / \\ : * ? \" < > |, no\n"
-		"leading/trailing space or trailing dot, not $..., com.apple..., Zone.Identifier.\n"
-		"Linux stores them as user.<name>; macOS and Windows (NTFS streams) verbatim.\n"
+		"leading/trailing space or trailing dot, not $..., com.apple..., Zone.Identifier,\n"
+		"and not starting with user. (Linux stores every name as user.<name> itself;\n"
+		"macOS and Windows NTFS streams store it verbatim).\n"
+		"Values over 4096 bytes draw a warning: ext4 without ea_inode fits about one\n"
+		"4 KiB block of attributes per file.\n"
 		"\n"
 		"Exit codes: 0 ok, 1 error, 2 usage, 3 unsupported fs, 4 missing, 5 permission,\n"
 		"6 too large, 7 path not found, 8 invalid name/path.\n",
@@ -120,9 +125,23 @@ static void json_string(FILE *out, const unsigned char *s, size_t len) {
 	fputc('"', out);
 }
 
+static void warn_portability(const cli_opts *o, size_t len) {
+	if (o->quiet || len <= XS_PORTABLE_VALUE_LEN) return;
+	if (o->json) {
+		fprintf(stderr, "{\"warning\":\"portability\",\"bytes\":%zu,\"portable_max\":%d,\"message\":"
+			"\"values over %d bytes may not fit on ext4 without the ea_inode feature\"}\n",
+			len, XS_PORTABLE_VALUE_LEN, XS_PORTABLE_VALUE_LEN);
+	} else {
+		fprintf(stderr, PROG ": warning: value is %zu bytes; values over %d bytes may not fit on ext4 without the ea_inode feature\n",
+			len, XS_PORTABLE_VALUE_LEN);
+	}
+}
+
 static void report(const cli_opts *o, const char *op, const char *path, const char *name, int status) {
 	const char *sname = xs_status_name(status);
 	int32_t os_err = xs_last_os_error();
+	int reason = XS_NAME_OK;
+	if (status == XS_INVALID_NAME && name) reason = xs_validate_name(name, strlen(name), &o->xs);
 	if (o->json) {
 		fputs("{\"status\":", stderr);
 		json_string(stderr, (const unsigned char *)sname, strlen(sname));
@@ -138,10 +157,19 @@ static void report(const cli_opts *o, const char *op, const char *path, const ch
 		}
 		fprintf(stderr, ",\"os_error\":%" PRId32 ",\"message\":", os_err);
 		json_string(stderr, (const unsigned char *)explain(status), strlen(explain(status)));
+		if (reason != XS_NAME_OK) {
+			const char *rn = xs_name_rejection_name(reason);
+			const char *rm = xs_name_rejection_message(reason);
+			fputs(",\"reason\":", stderr);
+			json_string(stderr, (const unsigned char *)rn, strlen(rn));
+			fputs(",\"reason_message\":", stderr);
+			json_string(stderr, (const unsigned char *)rm, strlen(rm));
+		}
 		fputs("}\n", stderr);
 	} else {
 		fprintf(stderr, PROG ": %s: %s%s%s: %s: %s (os error %" PRId32 ")\n",
 			op, path ? path : "", name ? ": " : "", name ? name : "", sname, explain(status), os_err);
+		if (reason != XS_NAME_OK) fprintf(stderr, PROG ": %s\n", xs_name_rejection_message(reason));
 	}
 }
 
@@ -203,6 +231,7 @@ static int cmd_put(const cli_opts *o, const char *path, const char *name) {
 		report(o, "put", "<stdin>", NULL, st);
 		return exit_for(st);
 	}
+	warn_portability(o, len);
 	st = xs_set(path, strlen(path), name, strlen(name), buf, len, &o->xs);
 	free(buf);
 	if (st != XS_OK) report(o, "put", path, name, st);
@@ -306,6 +335,7 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--nofollow") == 0) { o.xs.flags |= XS_FLAG_NOFOLLOW; continue; }
 			if (strcmp(a, "--raw") == 0) { o.xs.flags |= XS_FLAG_RAW_NAMES; continue; }
 			if (strcmp(a, "--json") == 0) { o.json = 1; continue; }
+			if (strcmp(a, "--quiet") == 0) { o.quiet = 1; continue; }
 			if (strcmp(a, "--limit") == 0) {
 				if (i + 1 >= argc || parse_u64(argv[++i], &o.xs.max_value_len) != 0) {
 					fprintf(stderr, PROG ": --limit needs a non-negative integer\n");

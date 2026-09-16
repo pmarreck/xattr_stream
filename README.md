@@ -27,6 +27,7 @@ xattr-stream --help | -h | --version | --about
   --raw        native OS names (Linux user.x, macOS com.apple.x, NTFS any stream)
   --limit <n>  max value size in bytes for put/get (default 65536)
   --json       JSON on stdout for len/lst/limits, JSON errors on stderr
+  --quiet      suppress warnings
 ```
 
 Options go anywhere; later options override earlier ones; `--` ends options.
@@ -48,10 +49,15 @@ Logical names (the default) work identically on every OS: 1 to 127 bytes of
 valid UTF-8, no control characters, none of `/ \ : * ? " < > |`, no leading or
 trailing space, no trailing dot, not starting with `$` or `com.apple.`, and
 not `Zone.Identifier` (case-insensitive). Linux stores them under `user.`;
-macOS and Windows verbatim. The mapping is a bijection, so listings show
-exactly the names a caller could address. Native names outside the grammar
-(other Linux namespaces, Apple's reserved attributes, NTFS `$` streams) are
-hidden from logical listings and reachable only with `--raw`.
+macOS and Windows verbatim. Because Linux requires that namespace (the
+kernel answers ENOTSUP for any name without a recognized prefix, and only
+`user.` is writable without privilege) and the library adds it for you, a
+name that already starts with `user.` is refused with an explanation rather
+than stored as `user.user.<name>`. The mapping is a bijection, so listings
+show exactly the names a caller could address. Native names outside the
+grammar (other Linux namespaces, Apple's reserved attributes, NTFS `$`
+streams) are hidden from logical listings and reachable only with `--raw`.
+`xs_validate_name` reports the exact reason for any refusal.
 
 The 127-byte cap comes from macOS, the strictest target. The character
 blacklist is Windows's, applied everywhere so a portable name is portable.
@@ -77,9 +83,12 @@ the smallest OS ceiling across targets (Linux's kernel limit,
 all of them. macOS and NTFS allow far more; raise the bound per call only
 when you knowingly target those alone. Larger writes are refused and larger
 reads fail before allocating. Some Linux filesystems stop well below the
-kernel ceiling (ext4 without `ea_inode` fits roughly one block, btrfs about
-16 KiB); `limits` reports only the kernel figure, and a refused write
-surfaces as `XS_TOO_LARGE`. A value that grows between
+kernel ceiling: ext4 without the `ea_inode` feature keeps all of an inode's
+attributes in roughly one 4 KiB block, btrfs allows about 16 KiB per value.
+`limits` reports only the kernel figure, and a refused write surfaces as
+`XS_TOO_LARGE`. The header exports `XS_PORTABLE_VALUE_LEN` (4096) as the
+size that fits everywhere by default, and the CLI warns on stderr when a
+value exceeds it (`--quiet` silences the warning). A value that grows between
 the size query and the read is retried up to four times, then reported as
 `XS_CHANGED`; a value that shrinks is returned at its actual length.
 

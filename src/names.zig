@@ -25,6 +25,11 @@ pub const Rejection = enum {
 	reserved,
 	not_utf8,
 	edge_whitespace_or_dot,
+	/// Starts with `user.`: the Linux namespace is applied by the library and
+	/// must not be spelled by the caller (it would store user.user.x on Linux).
+	linux_namespace,
+	/// Raw mode only: fails a hard OS limit or Windows path-injection rule.
+	invalid_native,
 };
 
 pub const NameError = error{InvalidName};
@@ -63,6 +68,7 @@ pub fn validateLogical(name: []const u8) ?Rejection {
 	if (!std.unicode.utf8ValidateSlice(name)) return .not_utf8;
 	const last = name[name.len - 1];
 	if (name[0] == ' ' or last == ' ' or last == '.') return .edge_whitespace_or_dot;
+	if (std.ascii.startsWithIgnoreCase(name, linux_user_prefix)) return .linux_namespace;
 	for (reserved_prefixes_ci) |p| {
 		if (std.ascii.startsWithIgnoreCase(name, p)) return .reserved;
 	}
@@ -70,6 +76,30 @@ pub fn validateLogical(name: []const u8) ?Rejection {
 		if (std.ascii.eqlIgnoreCase(name, e)) return .reserved;
 	}
 	return null;
+}
+
+/// Classify a name under the given mode: null when acceptable, otherwise why
+/// not. Raw mode reports only `invalid_native`.
+pub fn classify(os: Os, name: []const u8, opts: NameOptions) ?Rejection {
+	if (!opts.raw) return validateLogical(name);
+	var buf: [native_buf_len]u8 = undefined;
+	_ = toNative(os, name, opts, &buf) catch return .invalid_native;
+	return null;
+}
+
+/// Human-readable reason, suitable for CLI and consumer error messages.
+pub fn rejectionMessage(r: Rejection) [:0]const u8 {
+	return switch (r) {
+		.empty => "name is empty",
+		.too_long => "name is longer than 127 bytes",
+		.control_char => "name contains a control character or NUL",
+		.forbidden_char => "name contains one of / \\ : * ? \" < > |",
+		.reserved => "name is reserved by the OS ($..., com.apple..., Zone.Identifier)",
+		.not_utf8 => "name is not valid UTF-8",
+		.edge_whitespace_or_dot => "name has leading/trailing space or a trailing dot",
+		.linux_namespace => "the user. prefix is reserved: on Linux the library applies the user. namespace itself, so pass the name without it (or use raw names)",
+		.invalid_native => "native name is empty, too long, contains NUL, or contains a path character",
+	};
 }
 
 /// Map a caller-facing name to the NUL-terminated native name for `os`,
