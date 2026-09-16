@@ -33,7 +33,13 @@ xattr-stream --help | -h | --version | --about
   -d, --depth <n> limit the walk to n levels (0 = <path> alone); implies -r
   --depth-first   walk depth-first (pre-order) instead
   --values        lst: show values; printable UTF-8 as text, else as hex
+  --debug         report what a walk skipped (or set DEBUG)
+  --color         force ANSI in listings; --no-color/--no-ansi/--simple never
 ```
+
+On an interactive terminal, listings color attribute names bright orange
+and values light blue (256-color ANSI). Piped output, JSON, `NO_COLOR`, and
+`--no-color` get plain bytes; `--color` forces color into a pipe.
 
 Recursive listings print tab-separated columns: `path`, `name`, and with
 `--values` a type column (`text` or `hex`) followed by the value. Text means

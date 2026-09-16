@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --about; do
+for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -333,6 +333,35 @@ assert_err_empty
 out=""; err=""; rc=0; capture "$BIN" --json --debug lst -r "$tree"
 [[ "$err" =~ ^\{\"debug\": ]] && pass || fail "json debug note: '$err'"
 rm -f "$tree/dangling"
+
+current="ansi color: names bright orange, values light blue, only on a terminal"
+ESC=$'\e'
+orange="${ESC}[38;5;208m"; blue="${ESC}[38;5;117m"; reset="${ESC}[0m"
+# Captured output is not a terminal: no ANSI by default.
+out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
+[[ "$out" != *"$ESC"* ]] && pass || fail "no ANSI when stdout is not a tty"
+# --color forces it, exact bytes.
+out=""; err=""; rc=0; capture "$BIN" --color dump "$tree/f1"
+assert_out "${orange}f1.attr${reset}	text	${blue}one${reset}
+${orange}f1.other${reset}	text	${blue}two${reset}"
+out=""; err=""; rc=0; capture "$BIN" --color lst -d 0 "$tree"
+assert_out "$tree	${orange}root.attr${reset}"
+out=""; err=""; rc=0; capture "$BIN" --color lst "$tree/f1"
+assert_out "${orange}f1.attr${reset}
+${orange}f1.other${reset}"
+# Later switches win; JSON is never colored; NO_COLOR is honoured.
+for off in --no-color --no-ansi --simple; do
+	out=""; err=""; rc=0; capture "$BIN" --color "$off" dump "$tree/f1"
+	[[ "$out" != *"$ESC"* ]] && pass || fail "$off should disable color"
+done
+out=""; err=""; rc=0; capture "$BIN" --color --json dump "$tree/f1"
+[[ "$out" != *"$ESC"* ]] && pass || fail "JSON must never carry ANSI"
+if [[ "$(os_name)" == "Linux" ]] && command -v script >/dev/null 2>&1; then
+	out="$(script -qec "$BIN dump '$tree/f1'" /dev/null | tr -d '\r')"
+	[[ "$out" == *"$orange"* && "$out" == *"$blue"* ]] && pass || fail "expected ANSI on a pty: '$out'"
+	out="$(NO_COLOR=1 script -qec "$BIN dump '$tree/f1'" /dev/null | tr -d '\r')"
+	[[ "$out" != *"$ESC"* ]] && pass || fail "NO_COLOR should disable ANSI on a pty"
+fi
 
 current="unreadable subdirectory is a warning, not a stop"
 if [[ "$(id -u)" -ne 0 ]]; then

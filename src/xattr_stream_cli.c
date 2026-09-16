@@ -17,10 +17,19 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #define SET_BINARY(fp) _setmode(_fileno(fp), _O_BINARY)
+#define STDOUT_IS_TTY() _isatty(_fileno(stdout))
 #else
+#include <unistd.h>
 #define SET_BINARY(fp) ((void)0)
+#define STDOUT_IS_TTY() isatty(STDOUT_FILENO)
 #endif
+
+/* 256-color ANSI: names in bright orange, values in light blue. */
+#define ANSI_NAME "\x1b[38;5;208m"
+#define ANSI_VALUE "\x1b[38;5;117m"
+#define ANSI_RESET "\x1b[0m"
 
 #define PROG "xattr-stream"
 
@@ -48,7 +57,26 @@ typedef struct {
 	int depth_first;
 	int values;
 	int debug; /* --debug, or DEBUG env set to anything but "" or "0" */
+	int color; /* -1 auto (tty and no NO_COLOR), 0 off, 1 forced */
+	int use_color; /* resolved for this run */
 } cli_opts;
+
+/* Colors go only to an interactive terminal, never into JSON or a pipe. */
+static int resolve_color(const cli_opts *o) {
+	if (o->json) return 0;
+	if (o->color == 1) return 1;
+	if (o->color == 0) return 0;
+	const char *nc = getenv("NO_COLOR");
+	if (nc && *nc) return 0;
+	if (!STDOUT_IS_TTY()) return 0;
+#ifdef _WIN32
+	HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD mode = 0;
+	if (h == INVALID_HANDLE_VALUE || !GetConsoleMode(h, &mode)) return 0;
+	if (!SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) return 0;
+#endif
+	return 1;
+}
 
 static int exit_for(int status) {
 	switch (status) {
@@ -109,6 +137,9 @@ static void usage(FILE *out) {
 		"  --values        lst: show values; printable UTF-8 as text, else as hex\n"
 		"  --debug         also report what a recursive walk skipped, e.g. dangling\n"
 		"                  symlinks (or set the DEBUG environment variable)\n"
+		"  --color         force ANSI color in listings (default: only on a terminal,\n"
+		"                  and never when NO_COLOR is set)\n"
+		"  --no-color      never emit ANSI (aliases: --no-ansi, --simple)\n"
 		"\n"
 		"Listing columns are tab-separated: [path] name [text|hex value]. The path\n"
 		"column appears when recursing; the value columns with --values/dump.\n"
@@ -377,11 +408,15 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 			fwrite(path, 1, path_len, stdout);
 			fputc('\t', stdout);
 		}
+		if (o->use_color) fputs(ANSI_NAME, stdout);
 		fwrite(name, 1, name_len, stdout);
+		if (o->use_color) fputs(ANSI_RESET, stdout);
 		if (o->values) {
 			fputs(is_text ? "\ttext\t" : "\thex\t", stdout);
+			if (o->use_color) fputs(ANSI_VALUE, stdout);
 			if (is_text) fwrite(v.data, 1, v.len, stdout);
 			else print_hex(stdout, v.data, v.len);
+			if (o->use_color) fputs(ANSI_RESET, stdout);
 		}
 		fputc('\n', stdout);
 	}
@@ -431,7 +466,8 @@ static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64
 	return 0;
 }
 
-static int cmd_lst(const cli_opts *o, const char *path) {
+static int cmd_lst(cli_opts *o, const char *path) {
+	o->use_color = resolve_color(o);
 	lst_ctx c = { o, 1, 0 };
 	if (o->json) fputc('[', stdout);
 	int st;
@@ -462,6 +498,7 @@ int main(int argc, char **argv) {
 	memset(&o, 0, sizeof o);
 	o.xs.max_value_len = DEFAULT_LIMIT;
 	o.max_depth = -1;
+	o.color = -1;
 	const char *dbg = getenv("DEBUG");
 	if (dbg && *dbg && strcmp(dbg, "0") != 0) o.debug = 1;
 
@@ -488,6 +525,8 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--depth-first") == 0) { o.depth_first = 1; continue; }
 			if (strcmp(a, "--values") == 0) { o.values = 1; continue; }
 			if (strcmp(a, "--debug") == 0) { o.debug = 1; continue; }
+			if (strcmp(a, "--color") == 0) { o.color = 1; continue; }
+			if (strcmp(a, "--no-color") == 0 || strcmp(a, "--no-ansi") == 0 || strcmp(a, "--simple") == 0) { o.color = 0; continue; }
 			if (strcmp(a, "-d") == 0 || strcmp(a, "--depth") == 0 ||
 			    strncmp(a, "-d=", 3) == 0 || strncmp(a, "--depth=", 8) == 0) {
 				const char *num = strchr(a, '=');
