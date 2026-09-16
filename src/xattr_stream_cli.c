@@ -47,6 +47,7 @@ typedef struct {
 	int64_t max_depth; /* -1 = unlimited; 0 = the path alone */
 	int depth_first;
 	int values;
+	int debug; /* --debug, or DEBUG env set to anything but "" or "0" */
 } cli_opts;
 
 static int exit_for(int status) {
@@ -106,6 +107,8 @@ static void usage(FILE *out) {
 		"                  implies --recurse; also -d=<n> / --depth=<n>\n"
 		"  --depth-first   lst/dump: walk depth-first (pre-order) instead\n"
 		"  --values        lst: show values; printable UTF-8 as text, else as hex\n"
+		"  --debug         also report what a recursive walk skipped, e.g. dangling\n"
+		"                  symlinks (or set the DEBUG environment variable)\n"
 		"\n"
 		"Listing columns are tab-separated: [path] name [text|hex value]. The path\n"
 		"column appears when recursing; the value columns with --values/dump.\n"
@@ -410,8 +413,20 @@ static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64
 	}
 	int st = list_one(c, path, path_len);
 	/* A symlink whose target is gone has nothing to list; that is the link's
-	 * state, not an error in the walk, so it is skipped without noise. */
-	if (st == XS_NOT_FOUND && kind == XS_KIND_SYMLINK) return 0;
+	 * state, not an error in the walk, so it is skipped without noise unless
+	 * the user asked to see skips. */
+	if (st == XS_NOT_FOUND && kind == XS_KIND_SYMLINK) {
+		if (c->o->debug) {
+			if (c->o->json) {
+				fputs("{\"debug\":\"dangling_symlink\",\"path\":", stderr);
+				json_string(stderr, (const unsigned char *)path, path_len);
+				fputs("}\n", stderr);
+			} else {
+				fprintf(stderr, PROG ": debug: %.*s: dangling symlink, skipped\n", (int)path_len, path);
+			}
+		}
+		return 0;
+	}
 	if (st != XS_OK) warn_path(c, path, path_len, NULL, 0, st);
 	return 0;
 }
@@ -447,6 +462,8 @@ int main(int argc, char **argv) {
 	memset(&o, 0, sizeof o);
 	o.xs.max_value_len = DEFAULT_LIMIT;
 	o.max_depth = -1;
+	const char *dbg = getenv("DEBUG");
+	if (dbg && *dbg && strcmp(dbg, "0") != 0) o.debug = 1;
 
 	const char *pos[3] = {0};
 	int npos = 0;
@@ -470,6 +487,7 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "-r") == 0 || strcmp(a, "--recurse") == 0) { o.recurse = 1; continue; }
 			if (strcmp(a, "--depth-first") == 0) { o.depth_first = 1; continue; }
 			if (strcmp(a, "--values") == 0) { o.values = 1; continue; }
+			if (strcmp(a, "--debug") == 0) { o.debug = 1; continue; }
 			if (strcmp(a, "-d") == 0 || strcmp(a, "--depth") == 0 ||
 			    strncmp(a, "-d=", 3) == 0 || strncmp(a, "--depth=", 8) == 0) {
 				const char *num = strchr(a, '=');

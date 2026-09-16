@@ -43,7 +43,9 @@ attribute. `get` is unaffected and always writes raw bytes. Children are
 visited in bytewise order; symlinks are listed (per the follow policy) but
 never entered, so link loops cannot recurse. A subdirectory that cannot be
 read is reported as a warning and the walk continues, with exit code 1 at
-the end. `--json` produces an array of `{"path","name","text"|"hex"}`
+the end. Dangling symlinks have nothing to list and are skipped silently;
+`--debug` (or a `DEBUG` environment variable set to anything but `0`)
+reports each skip on stderr without changing the exit code. `--json` produces an array of `{"path","name","text"|"hex"}`
 objects (no `path` when not recursing; plain name strings when neither
 recursing nor showing values).
 

@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --about; do
+for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -318,6 +318,20 @@ assert_rc 7
 out=""; err=""; rc=0; capture "$BIN" --nofollow lst -r "$tree"
 assert_rc 0
 assert_err_empty
+# --debug or DEBUG=<non-empty, not 0> shows the skips as debug notes; exit code unaffected.
+out=""; err=""; rc=0; capture "$BIN" --debug lst -r "$tree"
+assert_rc 0
+assert_err_has "debug"
+assert_err_has "$tree/dangling"
+out=""; err=""; rc=0; DEBUG=1 capture "$BIN" lst -r "$tree"
+assert_rc 0
+assert_err_has "$tree/dangling"
+out=""; err=""; rc=0; DEBUG=0 capture "$BIN" lst -r "$tree"
+assert_err_empty
+out=""; err=""; rc=0; DEBUG= capture "$BIN" lst -r "$tree"
+assert_err_empty
+out=""; err=""; rc=0; capture "$BIN" --json --debug lst -r "$tree"
+[[ "$err" =~ ^\{\"debug\": ]] && pass || fail "json debug note: '$err'"
 rm -f "$tree/dangling"
 
 current="unreadable subdirectory is a warning, not a stop"
