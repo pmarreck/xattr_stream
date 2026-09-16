@@ -33,6 +33,14 @@ extern "C" {
 
 #define XS_VERSION "0.2.0"
 
+/*
+ * Default bound on a single value, on every OS: the smallest OS ceiling
+ * across targets (Linux XATTR_SIZE_MAX, 64 KiB), so a value accepted on one
+ * platform is accepted on all. Raise it per call through xs_options only when
+ * you knowingly target macOS or NTFS alone.
+ */
+#define XS_DEFAULT_MAX_VALUE_LEN 65536
+
 /* Status codes. Values are frozen; new codes are only ever appended. */
 typedef enum xs_status {
 	XS_OK               = 0,
@@ -59,7 +67,7 @@ enum {
 
 typedef struct xs_options {
 	uint32_t flags;
-	uint64_t max_value_len; /* 0 = library default (64 MiB). Bounds allocation on get and refuses larger sets. */
+	uint64_t max_value_len; /* 0 = XS_DEFAULT_MAX_VALUE_LEN. Bounds allocation on get and refuses larger sets. */
 } xs_options;
 
 /* Library-owned bytes. Release with xs_buffer_free. */

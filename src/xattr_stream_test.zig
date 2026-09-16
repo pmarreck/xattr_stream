@@ -205,8 +205,10 @@ test "values above max_value_len are TooLarge on set and get, without unbounded 
 	try expectEqualStrings(value, got);
 }
 
-test "Linux VFS caps a value at 64 KiB: one byte over is TooLarge" {
-	if (builtin.os.tag != .linux) return error.SkipZigTest;
+test "default value bound is the smallest OS ceiling (Linux 64 KiB) on every OS" {
+	// Peter, 2026-09-16: cap every OS at the minimum of the maxima so a value
+	// that works on one platform works on all of them, no surprises.
+	try expectEqual(@as(usize, 65536), xs.default_max_value_len);
 	var fx = try Fixture.init();
 	defer fx.deinit();
 	const f = try fx.file("f");
@@ -215,7 +217,7 @@ test "Linux VFS caps a value at 64 KiB: one byte over is TooLarge" {
 	defer alloc.free(big);
 	@memset(big, 'x');
 	try expectError(error.TooLarge, xs.set(f, "k", big, .{}));
-	try expectEqual(@as(i64, 65536), xs.limits(f));
+	if (builtin.os.tag == .linux) try expectEqual(@as(i64, 65536), xs.limits(f));
 }
 
 test "getInto reports BufferTooSmall and fills an exact buffer" {

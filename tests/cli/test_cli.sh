@@ -200,10 +200,14 @@ out=""; err=""; rc=0; capture "$BIN" --limit 4 --limit 100 put "$f" k <<<"1234"
 assert_rc 0
 out=""; err=""; rc=0; capture "$BIN" --limit 4 get "$f" k
 assert_rc 6
+# Default bound is 64 KiB on every OS (the smallest OS ceiling, Linux's).
+head -c 65537 /dev/zero >"$tmpdir/big"
+out=""; err=""; rc=0; capture "$BIN" put "$f" big <"$tmpdir/big"
+assert_rc 6
+assert_err_has "XS_TOO_LARGE"
+out=""; err=""; rc=0; capture "$BIN" --help
+[[ "$out" == *"65536"* ]] && pass || fail "help should state the 65536 default limit"
 if [[ "$(os_name)" == "Linux" ]]; then
-	head -c 65537 /dev/zero >"$tmpdir/big"
-	out=""; err=""; rc=0; capture "$BIN" put "$f" big <"$tmpdir/big"
-	assert_rc 6
 	out=""; err=""; rc=0; capture "$BIN" limits "$f"
 	assert_out "65536"
 fi

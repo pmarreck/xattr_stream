@@ -22,4 +22,4 @@
 - **consumer**: a program in another language (C, Rust, LuaJIT, Zig) that
   links or loads the library; each has a smoke test under `tests/consumers/`.
 - **APE**: Actually Portable Executable, the Cosmopolitan single-binary
-  format the pre-rewrite C version shipped as; now a legacy artifact.
+  format the pre-rewrite C version shipped as; retired 2026-09-16.

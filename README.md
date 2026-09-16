@@ -25,7 +25,7 @@ xattr-stream --help | -h | --version | --about
 
   --nofollow   operate on a symlink itself, not its target
   --raw        native OS names (Linux user.x, macOS com.apple.x, NTFS any stream)
-  --limit <n>  max value size in bytes for put/get (default 64 MiB)
+  --limit <n>  max value size in bytes for put/get (default 65536)
   --json       JSON on stdout for len/lst/limits, JSON errors on stderr
 ```
 
@@ -71,9 +71,15 @@ or Win32 code behind the most recent failure on the calling thread.
 ## Sizes and races
 
 Values are read and written whole; this is not a streaming API. Every
-operation is bounded by `max_value_len` (default 64 MiB): larger writes are
-refused and larger reads fail before allocating. Linux caps a value at
-64 KiB in the kernel regardless of filesystem. A value that grows between
+operation is bounded by `max_value_len`. The default is 64 KiB on every OS:
+the smallest OS ceiling across targets (Linux's kernel limit,
+`XATTR_SIZE_MAX`), chosen so a value accepted on one platform is accepted on
+all of them. macOS and NTFS allow far more; raise the bound per call only
+when you knowingly target those alone. Larger writes are refused and larger
+reads fail before allocating. Some Linux filesystems stop well below the
+kernel ceiling (ext4 without `ea_inode` fits roughly one block, btrfs about
+16 KiB); `limits` reports only the kernel figure, and a refused write
+surfaces as `XS_TOO_LARGE`. A value that grows between
 the size query and the read is retried up to four times, then reported as
 `XS_CHANGED`; a value that shrinks is returned at its actual length.
 
@@ -167,8 +173,8 @@ shim set and a second toolchain. Zig 0.16 cross-compiles all five targets
 from one host, links libSystem and kernel32 without SDKs, and gives an
 in-process unit test tier the Bash suite could not. The C CLI is kept
 deliberately: it can only reach the core through the header, which keeps
-the public ABI exercised on every build. The Cosmopolitan APE binary is no
-longer produced; `bin/xattr_stream_ape.com` is the last one, kept as a
-legacy artifact.
+the public ABI exercised on every build. The Cosmopolitan APE single binary
+is gone; its purpose, one easy cross-platform executable for attributes, is
+now served by the per-target static binaries from `./build_all`.
 
 MIT License.

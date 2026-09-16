@@ -115,10 +115,11 @@ pub fn statusName(code: c_int) [:0]const u8 {
 	};
 }
 
-/// Default bound on any single value the library will read or write. Linux
-/// caps values at 64 KiB in the VFS; macOS and NTFS allow far more. This is a
-/// caller-adjustable guard against unbounded allocation, not a streaming API.
-pub const default_max_value_len: usize = 64 << 20;
+/// Default bound on any single value the library will read or write: the
+/// smallest OS ceiling across targets, Linux's XATTR_SIZE_MAX (64 KiB), so a
+/// value accepted on one platform is accepted on all of them. macOS and NTFS
+/// allow far more; callers who knowingly target only those may raise it.
+pub const default_max_value_len: usize = 64 << 10;
 /// Bounded retries when a value changes between size query and read.
 pub const max_get_attempts: usize = 4;
 

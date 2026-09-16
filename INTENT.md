@@ -55,8 +55,9 @@ data streams were chosen; see README).
   works anywhere works everywhere.
 - Linux logical names live in the `user.` namespace only; other namespaces
   are reachable through raw mode.
-- The Cosmopolitan APE single binary is no longer built. The old binary
-  remains tracked as a legacy artifact pending Peter's decision.
+- The Cosmopolitan APE single binary is retired (Peter, 2026-09-16). Its
+  intent, an easy cross-platform executable for attributes, is met by the
+  static per-target CLI binaries instead.
 
 ## How success is verified
 
@@ -70,7 +71,6 @@ data streams were chosen; see README).
 
 ## Open questions
 
-- Whether to remove the legacy APE binary from the repository.
 - macOS: behavior of custom xattrs on signed app bundles across copy, update
   and codesign verification. Needs a Mac and isolated artifacts; pending.
 - Windows: whether zero-length named streams persist, and how symlink

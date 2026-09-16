@@ -36,7 +36,7 @@ enum {
 	EXIT_INVALID = 8
 };
 
-#define DEFAULT_LIMIT ((uint64_t)64 << 20)
+#define DEFAULT_LIMIT ((uint64_t)XS_DEFAULT_MAX_VALUE_LEN)
 #define READ_CHUNK ((size_t)64 * 1024)
 
 typedef struct {
@@ -91,7 +91,8 @@ static void usage(FILE *out) {
 		"Options (any order, before or after the command; -- ends options):\n"
 		"  --nofollow      operate on a symlink itself, not its target\n"
 		"  --raw           use native OS names (e.g. Linux user.x, macOS com.apple.x)\n"
-		"  --limit <n>     max value size in bytes for put/get (default 67108864)\n"
+		"  --limit <n>     max value size in bytes for put/get (default 65536, the\n"
+		"                  smallest OS ceiling; macOS and NTFS allow more)\n"
 		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr\n"
 		"\n"
 		"Names: 1..127 bytes UTF-8, no control chars or / \\ : * ? \" < > |, no\n"

@@ -101,6 +101,12 @@ test "status codes: missing, not found, invalid name, invalid path, and their na
 test "options: flags and max_value_len are honoured; NULL means defaults" {
 	var fx = try Fixture.init();
 	defer fx.deinit();
+	const over = try alloc.alloc(u8, ffi.XS_DEFAULT_MAX_VALUE_LEN + 1);
+	defer alloc.free(over);
+	@memset(over, 'x');
+	try expectEqual(ffi.XS_TOO_LARGE, ffi.xs_set(fx.file.ptr, fx.file.len, "k", 1, over.ptr, over.len, null));
+	const zero = ffi.xs_options{ .flags = 0, .max_value_len = 0 };
+	try expectEqual(ffi.XS_TOO_LARGE, ffi.xs_set(fx.file.ptr, fx.file.len, "k", 1, over.ptr, over.len, &zero));
 	const tight = ffi.xs_options{ .flags = 0, .max_value_len = 3 };
 	try expectEqual(ffi.XS_TOO_LARGE, ffi.xs_set(fx.file.ptr, fx.file.len, "k", 1, "toolong", 7, &tight));
 	try expectEqual(ffi.XS_OK, ffi.xs_set(fx.file.ptr, fx.file.len, "k", 1, "toolong", 7, null));

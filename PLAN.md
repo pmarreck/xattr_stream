@@ -48,8 +48,11 @@ taxonomy + race handling), `src/{linux,darwin,windows}.zig` (adapters),
 - [ ] Runtime verification on aarch64 Linux, macOS, Windows (no machine here)
 - [ ] macOS signed-app xattr assessment: needs a Mac, isolated artifacts, and
       a throwaway signing identity; report as pending
-- [ ] Decide whether bin/xattr_stream_ape.com (legacy Cosmopolitan binary)
-      stays tracked; it no longer matches any source
+- [x] Delete bin/xattr_stream_ape.com (Peter's call, 2026-09-16 10:30 EDT;
+      copy in ~/.Trash); commit AGENTS.md symlink + jj_cheatsheet removal
+- [x] Default value bound = 64 KiB on every OS (min of the OS maxima)
+- [ ] Naming model decision pending Peter: explicit `user.` everywhere vs
+      auto-prefix on Linux only (see reply of 2026-09-16)
 - [x] Final durable report to Einstein; original note Trashed (23:42 EDT)
 
 ## Known limits (documented in README)

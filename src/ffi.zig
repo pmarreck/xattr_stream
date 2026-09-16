@@ -24,6 +24,9 @@ pub const XS_OUT_OF_MEMORY: c_int = 11;
 pub const XS_IO: c_int = 12;
 pub const XS_INVALID_ARGUMENT: c_int = 13;
 
+/// Mirrors XS_DEFAULT_MAX_VALUE_LEN in the header.
+pub const XS_DEFAULT_MAX_VALUE_LEN: usize = xs.default_max_value_len;
+
 pub const XS_FLAG_NOFOLLOW: u32 = 1 << 0;
 pub const XS_FLAG_RAW_NAMES: u32 = 1 << 1;
 
@@ -45,6 +48,7 @@ comptime {
 	std.debug.assert(xs.statusCode(error.Missing) == XS_MISSING);
 	std.debug.assert(xs.statusCode(error.Io) == XS_IO);
 	std.debug.assert(@intFromEnum(xs.Status.invalid_argument) == XS_INVALID_ARGUMENT);
+	std.debug.assert(XS_DEFAULT_MAX_VALUE_LEN == 65536);
 }
 
 fn optionsFrom(o: ?*const xs_options) xs.Options {
