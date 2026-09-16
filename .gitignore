@@ -6,9 +6,9 @@
 /tests/consumers/zig/.zig-cache/
 /bin/*
 !/bin/.gitkeep
-!/bin/xattr_stream_ape.com
 .DS_Store
 /.direnv/
 /.dirtree-state
 AGENTS*.md
+/MECHATRON_PRIME_CI.md
 CLAUDE*.md
