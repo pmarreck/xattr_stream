@@ -49,9 +49,16 @@ enum {
 #define DEFAULT_LIMIT ((uint64_t)XS_DEFAULT_MAX_VALUE_LEN)
 #define READ_CHUNK ((size_t)64 * 1024)
 
+typedef enum { FMT_TSV = 0, FMT_CSV, FMT_TABLE, FMT_MD } out_fmt;
+#define MAX_COLS 4
+
 typedef struct {
 	xs_options xs;
 	int json;
+	out_fmt fmt;       /* --tsv (default) | --csv | --table | --md */
+	int utf8;          /* --utf8: printable UTF-8 values verbatim, plus a type column */
+	size_t cols[MAX_COLS]; /* --cols widths for the present columns, in order */
+	size_t cols_n;
 	int quiet;
 	int recurse;
 	int64_t max_depth; /* -1 = unlimited; 0 = the path alone */
@@ -137,9 +144,19 @@ static void usage(FILE *out) {
 		"  -d, --depth <n> lst/dump: limit the walk to n levels (0 = <path> alone);\n"
 		"                  implies --recurse; also -d=<n> / --depth=<n>\n"
 		"  --depth-first   lst/dump: walk depth-first (pre-order) instead\n"
-		"  --values        lst: show values; printable UTF-8 as text, anything else\n"
-		"                  as printable-binary (decode with `printable-binary -d`)\n"
-		"  --hex           show binary values as lowercase hex instead\n"
+		"  --values        lst: show values through printable-binary (one reversible\n"
+		"                  line per value; decode with `printable-binary -d`)\n"
+		"  --hex           show values as lowercase hex instead of printable-binary\n"
+		"  --utf8          show values that are printable single-line UTF-8 verbatim and\n"
+		"                  add a type column (utf8 | pb | hex)\n"
+		"  --tsv           tab-separated rows, no header (default)\n"
+		"  --csv           comma-separated rows with a header; names and values go\n"
+		"                  through printable-binary so no delimiter can appear\n"
+		"  --table         ASCII table; paths truncate on the left, other cells on the\n"
+		"                  right (default widths: path 48, name 24, type 4, value 40)\n"
+		"  --md, --markdown  Markdown table with the same widths\n"
+		"  --cols <a,b,..> column widths in display order ([path,] name, [type,] value);\n"
+		"                  0 = no truncation; implies --table unless --md is given\n"
 		"  -w, --max-width <n>  cut displayed values after n characters, appending\n"
 		"                  ...(N bytes); 0 = unlimited; never applies to --json\n"
 		"  --debug         also report what a recursive walk skipped: dangling symlinks\n"
@@ -148,8 +165,8 @@ static void usage(FILE *out) {
 		"                  and never when NO_COLOR is set)\n"
 		"  --no-color      never emit ANSI (aliases: --no-ansi, --simple)\n"
 		"\n"
-		"Listing columns are tab-separated: [path] name [text|hex value]. The path\n"
-		"column appears when recursing; the value columns with --values/dump.\n"
+		"Listing columns: [path] name [type] value. The path column appears when\n"
+		"recursing, the value with --values/dump, the type only with --utf8.\n"
 		"Children are visited in bytewise order; symlinks are listed but never entered.\n"
 		"\n"
 		"Names: 1..127 bytes UTF-8, no control chars or / \\ : * ? \" < > |, no\n"
@@ -335,19 +352,17 @@ static int cmd_del(const cli_opts *o, const char *path, const char *name) {
 
 /* ---- listing (single path or walked tree) -------------------------------- */
 
+enum { COL_PATH, COL_NAME, COL_TYPE, COL_VALUE, COL_COUNT };
+static const char *const col_label[COL_COUNT] = { "path", "name", "type", "value" };
+static const size_t col_default_width[COL_COUNT] = { 48, 24, 4, 40 };
+
 typedef struct {
 	const cli_opts *o;
 	int json_first;
 	int failures;
+	int present[COL_COUNT];
+	size_t width[COL_COUNT]; /* 0 = no truncation, no padding */
 } lst_ctx;
-
-static void print_hex(FILE *out, const unsigned char *p, size_t n) {
-	static const char hx[] = "0123456789abcdef";
-	for (size_t i = 0; i < n; i++) {
-		fputc(hx[p[i] >> 4], out);
-		fputc(hx[p[i] & 15], out);
-	}
-}
 
 static char *hex_alloc(const unsigned char *p, size_t n) {
 	static const char hx[] = "0123456789abcdef";
@@ -361,9 +376,14 @@ static char *hex_alloc(const unsigned char *p, size_t n) {
 	return s;
 }
 
-/* Byte length of the first max_chars code points of valid UTF-8 (a code
- * point starts at any byte that is not a 10xxxxxx continuation byte), so a
- * width cut never splits a multi-byte glyph. */
+/* Code points in valid UTF-8: every byte that is not a 10xxxxxx continuation. */
+static size_t utf8_count(const unsigned char *p, size_t len) {
+	size_t n = 0;
+	for (size_t i = 0; i < len; i++) if ((p[i] & 0xC0) != 0x80) n++;
+	return n;
+}
+
+/* Byte length of the first max_chars code points, so a cut never splits a glyph. */
 static size_t utf8_prefix_bytes(const unsigned char *p, size_t len, size_t max_chars) {
 	size_t chars = 0, i = 0;
 	while (i < len) {
@@ -376,19 +396,58 @@ static size_t utf8_prefix_bytes(const unsigned char *p, size_t len, size_t max_c
 	return i;
 }
 
-/* Prints a displayed value, cut to o->max_width characters with an
- * ellipsis and the raw byte count when it does not fit. */
-static void print_value(const cli_opts *o, const unsigned char *disp, size_t disp_len, size_t raw_len) {
-	size_t shown = disp_len;
-	int cut = 0;
-	if (o->max_width > 0) {
-		shown = utf8_prefix_bytes(disp, disp_len, o->max_width);
-		cut = shown < disp_len;
+/* Byte offset where the last max_chars code points begin. */
+static size_t utf8_suffix_start(const unsigned char *p, size_t len, size_t max_chars) {
+	size_t chars = 0, i = len;
+	while (i > 0) {
+		i--;
+		if ((p[i] & 0xC0) != 0x80) {
+			chars++;
+			if (chars == max_chars) return i;
+		}
 	}
-	if (o->use_color) fputs(ANSI_VALUE, stdout);
-	fwrite(disp, 1, shown, stdout);
-	if (o->use_color) fputs(ANSI_RESET, stdout);
-	if (cut) fprintf(stdout, "\xe2\x80\xa6(%zu bytes)", raw_len);
+	return 0;
+}
+
+/* A displayed value: which representation it uses and the bytes to show. */
+typedef struct {
+	const char *type;        /* "utf8", "pb" or "hex" */
+	const unsigned char *bytes;
+	size_t len;
+	pb_ffi_result_t pb;
+	char *hex;
+} value_disp;
+
+static value_disp render_value(const cli_opts *o, const unsigned char *raw, size_t raw_len) {
+	value_disp d = { "hex", raw, raw_len, {0}, NULL };
+	/* CSV always uses printable-binary so no delimiter can appear in a value. */
+	if (o->utf8 && o->fmt != FMT_CSV && xs_is_display_text(raw, raw_len)) {
+		d.type = "utf8";
+		return d;
+	}
+	if (!o->hex) {
+		d.pb = pb_encode((const char *)raw, raw_len, PB_ENCODE_NONE, NULL, 0);
+		if (d.pb.error_code == 0 && (d.pb.data || d.pb.len == 0)) {
+			d.type = "pb";
+			d.bytes = (const unsigned char *)d.pb.data;
+			d.len = d.pb.len;
+			return d;
+		}
+		if (d.pb.data) { pb_free(d.pb.data, d.pb.len); d.pb.data = NULL; }
+	}
+	d.hex = hex_alloc(raw, raw_len);
+	if (d.hex) {
+		d.bytes = (const unsigned char *)d.hex;
+		d.len = raw_len * 2;
+	}
+	return d;
+}
+
+static void free_value(value_disp *d) {
+	if (d->pb.data) pb_free(d->pb.data, d->pb.len);
+	free(d->hex);
+	d->pb.data = NULL;
+	d->hex = NULL;
 }
 
 static void warn_path(lst_ctx *c, const char *path, size_t path_len, const unsigned char *name, size_t name_len, int status) {
@@ -414,31 +473,145 @@ static void warn_path(lst_ctx *c, const char *path, size_t path_len, const unsig
 	}
 }
 
+/* ---- cell rendering for table / markdown --------------------------------- */
+
+/* Truncate to `width` code points (0 = unlimited): paths keep their end
+ * (left ellipsis), everything else keeps its start. Returns a malloc'd
+ * NUL-terminated string. */
+static char *fit_cell(const unsigned char *s, size_t len, size_t width, int keep_end) {
+	static const char ell[] = "\xe2\x80\xa6";
+	size_t cps = utf8_count(s, len);
+	if (width == 0 || cps <= width) {
+		char *out = malloc(len + 1);
+		if (!out) return NULL;
+		memcpy(out, s, len);
+		out[len] = '\0';
+		return out;
+	}
+	size_t keep = width - 1;
+	if (keep_end) {
+		size_t start = keep == 0 ? len : utf8_suffix_start(s, len, keep);
+		size_t n = len - start;
+		char *out = malloc(3 + n + 1);
+		if (!out) return NULL;
+		memcpy(out, ell, 3);
+		memcpy(out + 3, s + start, n);
+		out[3 + n] = '\0';
+		return out;
+	}
+	size_t n = utf8_prefix_bytes(s, len, keep);
+	char *out = malloc(n + 3 + 1);
+	if (!out) return NULL;
+	memcpy(out, s, n);
+	memcpy(out + n, ell, 3);
+	out[n + 3] = '\0';
+	return out;
+}
+
+/* Replace every | with `repl` (table: U+2223 DIVIDES, markdown: \|) so a cell
+ * can never break the frame. Returns a malloc'd string. */
+static char *escape_bars(const char *s, const char *repl) {
+	size_t rl = strlen(repl), n = 0;
+	for (const char *p = s; *p; p++) n += (*p == '|') ? rl : 1;
+	char *out = malloc(n + 1);
+	if (!out) return NULL;
+	char *w = out;
+	for (const char *p = s; *p; p++) {
+		if (*p == '|') { memcpy(w, repl, rl); w += rl; }
+		else *w++ = *p;
+	}
+	*w = '\0';
+	return out;
+}
+
+/* Prints one framed cell: text (optionally colored), then padding to width. */
+static void put_cell(const lst_ctx *c, const char *text, size_t width, const char *ansi) {
+	const cli_opts *o = c->o;
+	int color = ansi && o->use_color && o->fmt == FMT_TABLE;
+	if (color) fputs(ansi, stdout);
+	fputs(text, stdout);
+	if (color) fputs(ANSI_RESET, stdout);
+	size_t cps = utf8_count((const unsigned char *)text, strlen(text));
+	for (size_t i = cps; i < width; i++) fputc(' ', stdout);
+}
+
+static void table_border(const lst_ctx *c) {
+	fputc(c->o->fmt == FMT_TABLE ? '+' : '|', stdout);
+	for (int col = 0; col < COL_COUNT; col++) {
+		if (!c->present[col]) continue;
+		size_t w = c->width[col] ? c->width[col] : strlen(col_label[col]);
+		for (size_t i = 0; i < w + 2; i++) fputc('-', stdout);
+		fputc(c->o->fmt == FMT_TABLE ? '+' : '|', stdout);
+	}
+	fputc('\n', stdout);
+}
+
+/* One framed row; cells arrive already shaped for the format (escaped). */
+static void framed_row(const lst_ctx *c, char *const cells[COL_COUNT]) {
+	for (int col = 0; col < COL_COUNT; col++) {
+		if (!c->present[col]) continue;
+		fputs("| ", stdout);
+		put_cell(c, cells[col], c->width[col], col == COL_NAME ? ANSI_NAME : col == COL_VALUE ? ANSI_VALUE : NULL);
+		fputc(' ', stdout);
+	}
+	fputs("|\n", stdout);
+}
+
+static void header_row(lst_ctx *c) {
+	char *cells[COL_COUNT] = {0};
+	for (int col = 0; col < COL_COUNT; col++) {
+		if (!c->present[col]) continue;
+		cells[col] = fit_cell((const unsigned char *)col_label[col], strlen(col_label[col]), c->width[col], 0);
+	}
+	if (c->o->fmt == FMT_TABLE) table_border(c);
+	framed_row(c, cells);
+	table_border(c);
+	for (int col = 0; col < COL_COUNT; col++) free(cells[col]);
+}
+
+/* CSV field per RFC 4180: quoted when it holds a comma, quote, CR or LF. */
+static void csv_field(const unsigned char *s, size_t len) {
+	int quote = 0;
+	for (size_t i = 0; i < len; i++) {
+		if (s[i] == ',' || s[i] == '"' || s[i] == '\n' || s[i] == '\r') { quote = 1; break; }
+	}
+	if (!quote) { fwrite(s, 1, len, stdout); return; }
+	fputc('"', stdout);
+	for (size_t i = 0; i < len; i++) {
+		if (s[i] == '"') fputc('"', stdout);
+		fputc(s[i], stdout);
+	}
+	fputc('"', stdout);
+}
+
+/* Prints a displayed value in TSV form, cut to o->max_width characters with
+ * an ellipsis and the raw byte count when it does not fit. */
+static void print_value_tsv(const cli_opts *o, const unsigned char *disp, size_t disp_len, size_t raw_len) {
+	size_t shown = disp_len;
+	int cut = 0;
+	if (o->max_width > 0) {
+		shown = utf8_prefix_bytes(disp, disp_len, o->max_width);
+		cut = shown < disp_len;
+	}
+	if (o->use_color) fputs(ANSI_VALUE, stdout);
+	fwrite(disp, 1, shown, stdout);
+	if (o->use_color) fputs(ANSI_RESET, stdout);
+	if (cut) fprintf(stdout, "\xe2\x80\xa6(%zu bytes)", raw_len);
+}
+
 static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsigned char *name, size_t name_len) {
 	const cli_opts *o = c->o;
 	xs_buffer v = {0};
-	int is_text = 0;
+	value_disp vd = {0};
 	if (o->values) {
 		int st = xs_get(path, path_len, (const char *)name, name_len, &o->xs, &v);
 		if (st != XS_OK) {
 			warn_path(c, path, path_len, name, name_len, st);
 			return;
 		}
-		is_text = xs_is_display_text(v.data, v.len);
+		vd = render_value(o, v.data, v.len);
 	}
-	/* Binary values: printable-binary by default (one reversible line of
-	 * UTF-8 with no control characters), hex on request or if encoding fails. */
-	const char *type = "text";
-	pb_ffi_result_t pb = {0};
-	if (o->values && !is_text) {
-		type = "hex";
-		if (!o->hex) {
-			pb = pb_encode((const char *)v.data, v.len, PB_ENCODE_NONE, NULL, 0);
-			if (pb.error_code == 0 && (pb.data || pb.len == 0)) type = "pb";
-			else if (pb.data) { pb_free(pb.data, pb.len); pb.data = NULL; }
-		}
-	}
-	int is_pb = strcmp(type, "pb") == 0;
+
 	if (o->json) {
 		if (!c->json_first) fputc(',', stdout);
 		c->json_first = 0;
@@ -454,20 +627,12 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 			fputs("\"name\":", stdout);
 			json_string(stdout, name, name_len);
 			if (o->values) {
-				fprintf(stdout, ",\"%s\":", type);
-				if (is_text) {
-					json_string(stdout, v.data, v.len);
-				} else if (is_pb) {
-					json_string(stdout, (const unsigned char *)pb.data, pb.len);
-				} else {
-					fputc('"', stdout);
-					print_hex(stdout, v.data, v.len);
-					fputc('"', stdout);
-				}
+				fprintf(stdout, ",\"%s\":", vd.type);
+				json_string(stdout, vd.bytes, vd.len);
 			}
 			fputc('}', stdout);
 		}
-	} else {
+	} else if (o->fmt == FMT_TSV) {
 		if (o->recurse) {
 			fwrite(path, 1, path_len, stdout);
 			fputc('\t', stdout);
@@ -476,25 +641,44 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 		fwrite(name, 1, name_len, stdout);
 		if (o->use_color) fputs(ANSI_RESET, stdout);
 		if (o->values) {
-			fprintf(stdout, "\t%s\t", type);
-			if (is_text) {
-				print_value(o, v.data, v.len, v.len);
-			} else if (is_pb) {
-				print_value(o, (const unsigned char *)pb.data, pb.len, v.len);
-			} else {
-				char *hx = hex_alloc(v.data, v.len);
-				if (hx) {
-					print_value(o, (const unsigned char *)hx, v.len * 2, v.len);
-					free(hx);
-				} else {
-					print_hex(stdout, v.data, v.len);
-				}
-			}
+			if (c->present[COL_TYPE]) fprintf(stdout, "\t%s", vd.type);
+			fputc('\t', stdout);
+			print_value_tsv(o, vd.bytes, vd.len, v.len);
 		}
 		fputc('\n', stdout);
+	} else {
+		/* Names go through printable-binary in the delimited formats so no
+		 * delimiter (| , tabs, control chars) can appear in them. */
+		pb_ffi_result_t npb = pb_encode((const char *)name, name_len, PB_ENCODE_NONE, NULL, 0);
+		const unsigned char *nb = npb.error_code == 0 && npb.data ? (const unsigned char *)npb.data : name;
+		size_t nl = npb.error_code == 0 && npb.data ? npb.len : name_len;
+		if (o->fmt == FMT_CSV) {
+			int first = 1;
+			if (o->recurse) { csv_field((const unsigned char *)path, path_len); first = 0; }
+			if (!first) fputc(',', stdout);
+			csv_field(nb, nl);
+			if (o->values) { fputc(',', stdout); csv_field(vd.bytes, vd.len); }
+			fputc('\n', stdout);
+		} else {
+			const char *bar = o->fmt == FMT_TABLE ? "\xe2\x88\xa3" : "\\|";
+			char *cells[COL_COUNT] = {0};
+			char *fitted[COL_COUNT] = {0};
+			fitted[COL_PATH] = c->present[COL_PATH] ? fit_cell((const unsigned char *)path, path_len, c->width[COL_PATH], 1) : NULL;
+			fitted[COL_NAME] = fit_cell(nb, nl, c->width[COL_NAME], 0);
+			fitted[COL_TYPE] = c->present[COL_TYPE] ? fit_cell((const unsigned char *)vd.type, strlen(vd.type), c->width[COL_TYPE], 0) : NULL;
+			fitted[COL_VALUE] = c->present[COL_VALUE] ? fit_cell(vd.bytes, vd.len, c->width[COL_VALUE], 0) : NULL;
+			for (int col = 0; col < COL_COUNT; col++) {
+				if (fitted[col]) cells[col] = escape_bars(fitted[col], bar);
+			}
+			framed_row(c, cells);
+			for (int col = 0; col < COL_COUNT; col++) { free(fitted[col]); free(cells[col]); }
+		}
+		if (npb.data) pb_free(npb.data, npb.len);
 	}
-	if (pb.data) pb_free(pb.data, pb.len);
-	if (o->values) xs_buffer_free(&v);
+	if (o->values) {
+		free_value(&vd);
+		xs_buffer_free(&v);
+	}
 }
 
 static int list_one(lst_ctx *c, const char *path, size_t path_len) {
@@ -545,8 +729,30 @@ static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64
 
 static int cmd_lst(cli_opts *o, const char *path) {
 	o->use_color = resolve_color(o);
-	lst_ctx c = { o, 1, 0 };
+	lst_ctx c = { o, 1, 0, {0}, {0} };
+	c.present[COL_PATH] = o->recurse;
+	c.present[COL_NAME] = 1;
+	c.present[COL_TYPE] = o->values && o->utf8 && o->fmt != FMT_CSV;
+	c.present[COL_VALUE] = o->values;
+	size_t k = 0;
+	for (int col = 0; col < COL_COUNT; col++) {
+		if (!c.present[col]) continue;
+		c.width[col] = k < o->cols_n ? o->cols[k] : col_default_width[col];
+		k++;
+	}
+	int framed = !o->json && (o->fmt == FMT_TABLE || o->fmt == FMT_MD);
 	if (o->json) fputc('[', stdout);
+	else if (framed) header_row(&c);
+	else if (o->fmt == FMT_CSV) {
+		int first = 1;
+		for (int col = 0; col < COL_COUNT; col++) {
+			if (!c.present[col]) continue;
+			if (!first) fputc(',', stdout);
+			fputs(col_label[col], stdout);
+			first = 0;
+		}
+		fputc('\n', stdout);
+	}
 	int st;
 	if (o->recurse) {
 		st = xs_walk(path, strlen(path), o->depth_first ? XS_WALK_DEPTH_FIRST : XS_WALK_BREADTH_FIRST,
@@ -555,6 +761,7 @@ static int cmd_lst(cli_opts *o, const char *path) {
 		st = list_one(&c, path, strlen(path));
 	}
 	if (o->json) fputs("]\n", stdout);
+	else if (framed && o->fmt == FMT_TABLE) table_border(&c);
 	if (st != XS_OK) {
 		report(o, "lst", path, NULL, st);
 		return exit_for(st);
@@ -572,6 +779,7 @@ static int cmd_limits(const cli_opts *o, const char *path) {
 
 int main(int argc, char **argv) {
 	cli_opts o;
+	int cols_given = 0;
 	memset(&o, 0, sizeof o);
 	o.xs.max_value_len = DEFAULT_LIMIT;
 	o.max_depth = -1;
@@ -603,6 +811,33 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--values") == 0) { o.values = 1; continue; }
 			if (strcmp(a, "--debug") == 0) { o.debug = 1; continue; }
 			if (strcmp(a, "--hex") == 0) { o.hex = 1; continue; }
+			if (strcmp(a, "--utf8") == 0) { o.utf8 = 1; continue; }
+			if (strcmp(a, "--tsv") == 0) { o.fmt = FMT_TSV; continue; }
+			if (strcmp(a, "--csv") == 0) { o.fmt = FMT_CSV; continue; }
+			if (strcmp(a, "--table") == 0) { o.fmt = FMT_TABLE; continue; }
+			if (strcmp(a, "--md") == 0 || strcmp(a, "--markdown") == 0) { o.fmt = FMT_MD; continue; }
+			if (strcmp(a, "--cols") == 0 || strcmp(a, "--columns") == 0 ||
+			    strncmp(a, "--cols=", 7) == 0 || strncmp(a, "--columns=", 10) == 0) {
+				const char *spec = strchr(a, '=');
+				if (spec) spec++;
+				else if (i + 1 < argc) spec = argv[++i];
+				if (!spec || !*spec) { usage(stderr); return EXIT_USAGE; }
+				o.cols_n = 0;
+				while (*spec) {
+					char *end = NULL;
+					errno = 0;
+					unsigned long long w = strtoull(spec, &end, 10);
+					if (errno != 0 || end == spec || (*end != '\0' && *end != ',') || o.cols_n == MAX_COLS) {
+						fprintf(stderr, PROG ": --cols needs up to %d comma-separated non-negative integers\n", MAX_COLS);
+						usage(stderr);
+						return EXIT_USAGE;
+					}
+					o.cols[o.cols_n++] = (size_t)w;
+					spec = *end == ',' ? end + 1 : end;
+				}
+				cols_given = 1;
+				continue;
+			}
 			if (strcmp(a, "-w") == 0 || strcmp(a, "--max-width") == 0 ||
 			    strncmp(a, "-w=", 3) == 0 || strncmp(a, "--max-width=", 12) == 0) {
 				const char *num = strchr(a, '=');
@@ -649,6 +884,9 @@ int main(int argc, char **argv) {
 		if (npos == 3) { usage(stderr); return EXIT_USAGE; }
 		pos[npos++] = a;
 	}
+
+	/* Explicit widths mean a framed table unless Markdown was asked for. */
+	if (cols_given && o.fmt != FMT_MD && o.fmt != FMT_CSV) o.fmt = FMT_TABLE;
 
 	if (npos == 0) { usage(stderr); return EXIT_USAGE; }
 	const char *cmd = pos[0];

@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump dmp limits lim --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --about; do
+for word in put get len del lst dump dmp limits lim --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --utf8 --tsv --csv --table --md --cols --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -274,61 +274,85 @@ assert_out "$tree	root.attr"
 out=""; err=""; rc=0; capture "$BIN" lst -d nope "$tree"
 assert_rc 2
 
-current="values: text or hex"
+current="values: printable-binary by default, utf8 on request, type never says text"
 out=""; err=""; rc=0; capture "$BIN" lst --values -d 1 "$tree"
-assert_out "$tree	root.attr	text	r
-$tree/a	a.attr	text	A
-$tree/f1	f1.attr	text	one
-$tree/f1	f1.other	text	two
-$tree/l	a.attr	text	A"
-# Binary values render as printable-binary text (one line, no control chars,
-# reversible with `printable-binary -d`). The fixture was produced by the
-# independent LuaJIT printable-binary implementation, not by this program.
+assert_out "$tree	root.attr	r
+$tree/a	a.attr	A
+$tree/f1	f1.attr	one
+$tree/f1	f1.other	two
+$tree/l	a.attr	A"
+# Every value goes through printable-binary (one reversible line, no control
+# chars, `printable-binary -d` restores it). The fixture was produced by the
+# independent LuaJIT implementation, not by this program.
 allpb="$(cat "$ROOT/tests/cli/fixtures/allbytes.pb")"
 allhex="$(od -An -v -tx1 "$allbytes" | tr -d ' \n')"
 out=""; err=""; rc=0; capture "$BIN" lst --values "$tree/a/x/deep"
-assert_out "deep.attr	pb	$allpb"
+assert_out "deep.attr	$allpb"
 out=""; err=""; rc=0; capture "$BIN" --hex lst --values "$tree/a/x/deep"
-assert_out "deep.attr	hex	$allhex"
+assert_out "deep.attr	$allhex"
 printf '\x00\x01\xfe\xff' | "$BIN" put "$tree/a/x/deep" small.bin
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/a/x/deep"
-assert_out "deep.attr	pb	$allpb
-small.bin	pb	·¯żŻ"
+assert_out "deep.attr	$allpb
+small.bin	·¯żŻ"
 "$BIN" del "$tree/a/x/deep" small.bin
 out=""; err=""; rc=0; capture "$BIN" lst --values "$tree/b/z"
-assert_out "z.attr	text	"
+assert_out "z.attr	"
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
-assert_out "f1.attr	text	one
-f1.other	text	two"
+assert_out "f1.attr	one
+f1.other	two"
 # Three-letter aliases, like put/get/len/del/lst.
 out=""; err=""; rc=0; capture "$BIN" dmp "$tree/f1"
-assert_out "f1.attr	text	one
-f1.other	text	two"
+assert_out "f1.attr	one
+f1.other	two"
 out=""; err=""; rc=0; capture "$BIN" lim "$tree/f1"
 assert_rc 0
 [[ "$out" =~ ^-?[0-9]+$ ]] && pass || fail "lim alias: '$out'"
 printf 'multi\nline' | "$BIN" put "$tree/f1" f1.multi
+printf 'ünï' | "$BIN" put "$tree/f1" f1.uni
+printf 'sunny day' | "$BIN" put "$tree/f1" f1.spaced
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
-assert_out "f1.attr	text	one
+assert_out "f1.attr	one
+f1.multi	multi¶line
+f1.other	two
+f1.spaced	sunny␣day
+f1.uni	ĹǩnĹȟ"
+# --utf8: values that are printable single-line UTF-8 pass through verbatim
+# and a type column says which representation each row uses.
+out=""; err=""; rc=0; capture "$BIN" --utf8 dump "$tree/f1"
+assert_out "f1.attr	utf8	one
 f1.multi	pb	multi¶line
-f1.other	text	two"
-out=""; err=""; rc=0; capture "$BIN" --hex dump "$tree/f1"
-assert_out "f1.attr	text	one
+f1.other	utf8	two
+f1.spaced	utf8	sunny day
+f1.uni	utf8	ünï"
+out=""; err=""; rc=0; capture "$BIN" --utf8 --hex dump "$tree/f1"
+assert_out "f1.attr	utf8	one
 f1.multi	hex	6d756c74690a6c696e65
-f1.other	text	two"
-"$BIN" del "$tree/f1" f1.multi
+f1.other	utf8	two
+f1.spaced	utf8	sunny day
+f1.uni	utf8	ünï"
+out=""; err=""; rc=0; capture "$BIN" --hex dump "$tree/f1"
+assert_out "f1.attr	6f6e65
+f1.multi	6d756c74690a6c696e65
+f1.other	74776f
+f1.spaced	73756e6e7920646179
+f1.uni	c3bc6ec3af"
+for n in f1.multi f1.uni f1.spaced; do "$BIN" del "$tree/f1" "$n"; done
 
 current="recursive json"
 out=""; err=""; rc=0; capture "$BIN" --json lst -d 1 "$tree"
 assert_rc 0
 assert_out "[{\"path\":\"$tree\",\"name\":\"root.attr\"},{\"path\":\"$tree/a\",\"name\":\"a.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.other\"},{\"path\":\"$tree/l\",\"name\":\"a.attr\"}]"
 out=""; err=""; rc=0; capture "$BIN" --json lst --values "$tree/f1"
-assert_out '[{"name":"f1.attr","text":"one"},{"name":"f1.other","text":"two"}]'
+assert_out '[{"name":"f1.attr","pb":"one"},{"name":"f1.other","pb":"two"}]'
+out=""; err=""; rc=0; capture "$BIN" --json --utf8 dump "$tree/f1"
+assert_out '[{"name":"f1.attr","utf8":"one"},{"name":"f1.other","utf8":"two"}]'
 printf '\x00\x01\xfe\xff' | "$BIN" put "$tree/a/x/deep" small.bin
 out=""; err=""; rc=0; capture "$BIN" --json dump "$tree/a/x/deep"
 [[ "$out" == *'{"name":"small.bin","pb":"·¯żŻ"}'* ]] && pass || fail "json pb value: '$out'"
 out=""; err=""; rc=0; capture "$BIN" --json --hex dump "$tree/a/x/deep"
 [[ "$out" == *'{"name":"small.bin","hex":"0001feff"}'* ]] && pass || fail "json hex value: '$out'"
+out=""; err=""; rc=0; capture "$BIN" --json --utf8 dump "$tree/a/x/deep"
+[[ "$out" == *'{"name":"small.bin","pb":"·¯żŻ"}'* ]] && pass || fail "json utf8 mode keeps pb for binary: '$out'"
 "$BIN" del "$tree/a/x/deep" small.bin
 
 current="dangling symlinks are skipped silently when recursing"
@@ -360,6 +384,7 @@ out=""; err=""; rc=0; capture "$BIN" --json --debug lst -r "$tree"
 [[ "$err" =~ ^\{\"debug\": ]] && pass || fail "json debug note: '$err'"
 rm -f "$tree/dangling"
 
+
 current="max width truncates displayed values with an ellipsis and byte count"
 ESC=$'\e'
 wf="$(new_file wide)"
@@ -371,41 +396,43 @@ for form in "-w 4" "-w=4" "--max-width 4" "--max-width=4"; do
 	# shellcheck disable=SC2086
 	out=""; err=""; rc=0; capture "$BIN" dump $form "$wf"
 	assert_rc 0
-	assert_out "bin	pb	·¯żŻ
-long	text	abcd…(10 bytes)
-short	text	one
-uni	text	ünï"
+	assert_out "bin	·¯żŻ
+long	abcd…(10 bytes)
+short	one
+uni	ĹǩnĹ…(5 bytes)"
 done
 # Cuts fall on code points, never inside a UTF-8 sequence.
-out=""; err=""; rc=0; capture "$BIN" dump -w 2 "$wf"
+out=""; err=""; rc=0; capture "$BIN" --utf8 dump -w 2 "$wf"
 assert_out "bin	pb	·¯…(4 bytes)
-long	text	ab…(10 bytes)
-short	text	on…(3 bytes)
-uni	text	ün…(5 bytes)"
+long	utf8	ab…(10 bytes)
+short	utf8	on…(3 bytes)
+uni	utf8	ün…(5 bytes)"
 out=""; err=""; rc=0; capture "$BIN" --hex dump -w 4 "$wf"
-[[ "$out" == *"bin	hex	0001…(4 bytes)"* ]] && pass || fail "hex truncation: '$out'"
+[[ "$out" == *"bin	0001…(4 bytes)"* ]] && pass || fail "hex truncation: '$out'"
 out=""; err=""; rc=0; capture "$BIN" dump -w 8 "$tree/a/x/deep"
-assert_out "deep.attr	pb	·¯«»ϟ¿¡ª…(256 bytes)"
+assert_out "deep.attr	·¯«»ϟ¿¡ª…(256 bytes)"
 # 0 means unlimited; JSON is never truncated; garbage is a usage error.
 out=""; err=""; rc=0; capture "$BIN" dump -w 4 -w 0 "$wf"
-[[ "$out" == *"long	text	abcdefghij"* ]] && pass || fail "-w 0 should lift the limit: '$out'"
+[[ "$out" == *"long	abcdefghij"* ]] && pass || fail "-w 0 should lift the limit: '$out'"
 out=""; err=""; rc=0; capture "$BIN" --json dump -w 4 "$wf"
-[[ "$out" == *'{"name":"long","text":"abcdefghij"}'* ]] && pass || fail "JSON must not be truncated: '$out'"
+[[ "$out" == *'{"name":"long","pb":"abcdefghij"}'* ]] && pass || fail "JSON must not be truncated: '$out'"
 out=""; err=""; rc=0; capture "$BIN" dump -w nope "$wf"
 assert_rc 2
 out=""; err=""; rc=0; capture "$BIN" --color dump -w 4 "$wf"
-[[ "$out" == *"${ESC}[38;5;208mlong${ESC}[0m	text	${ESC}[38;5;117mabcd${ESC}[0m…(10 bytes)"* ]] && pass || fail "colored truncation: '$out'"
+[[ "$out" == *"${ESC}[38;5;208mlong${ESC}[0m	${ESC}[38;5;117mabcd${ESC}[0m…(10 bytes)"* ]] && pass || fail "colored truncation: '$out'"
 
 current="ansi color: names bright orange, values light blue, only on a terminal"
-ESC=$'\e'
 orange="${ESC}[38;5;208m"; blue="${ESC}[38;5;117m"; reset="${ESC}[0m"
 # Captured output is not a terminal: no ANSI by default.
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
 [[ "$out" != *"$ESC"* ]] && pass || fail "no ANSI when stdout is not a tty"
 # --color forces it, exact bytes.
 out=""; err=""; rc=0; capture "$BIN" --color dump "$tree/f1"
-assert_out "${orange}f1.attr${reset}	text	${blue}one${reset}
-${orange}f1.other${reset}	text	${blue}two${reset}"
+assert_out "${orange}f1.attr${reset}	${blue}one${reset}
+${orange}f1.other${reset}	${blue}two${reset}"
+out=""; err=""; rc=0; capture "$BIN" --color --utf8 dump "$tree/f1"
+assert_out "${orange}f1.attr${reset}	utf8	${blue}one${reset}
+${orange}f1.other${reset}	utf8	${blue}two${reset}"
 out=""; err=""; rc=0; capture "$BIN" --color lst -d 0 "$tree"
 assert_out "$tree	${orange}root.attr${reset}"
 out=""; err=""; rc=0; capture "$BIN" --color lst "$tree/f1"
@@ -424,6 +451,88 @@ if [[ "$(os_name)" == "Linux" ]] && command -v script >/dev/null 2>&1; then
 	out="$(NO_COLOR=1 script -qec "$BIN dump '$tree/f1'" /dev/null | tr -d '\r')"
 	[[ "$out" != *"$ESC"* ]] && pass || fail "NO_COLOR should disable ANSI on a pty"
 fi
+
+current="output formats: tsv, csv, ascii table, markdown, --cols"
+fmt="$tmpdir/fmt"
+mkdir -p "$fmt"
+: >"$fmt/plain"; : >"$fmt/we,ird|f"
+printf 'one' | "$BIN" put "$fmt/plain" key
+printf 'a,b|c"d' | "$BIN" put "$fmt/we,ird|f" 'k,e_y'
+# Relative paths keep the expectations independent of the temp directory.
+run_in_tmp() { (cd "$tmpdir" && "$BIN" "$@"); }
+out="$(run_in_tmp --tsv dump -r fmt)"; rc=$?
+assert_rc 0
+assert_out 'fmt/plain	key	one
+fmt/we,ird|f	k,e_y	a٫b∣cˮd'
+# CSV: header row, RFC 4180 quoting for paths, names and values through
+# printable-binary so no delimiter can appear in them.
+out="$(run_in_tmp --csv dump -r fmt)"; rc=$?
+assert_rc 0
+assert_out 'path,name,value
+fmt/plain,key,one
+"fmt/we,ird|f",k٫e_y,a٫b∣cˮd'
+out="$(run_in_tmp --csv --utf8 dump fmt/plain)"; rc=$?
+assert_out 'name,value
+key,one'
+# ASCII table with explicit widths: paths ellipsis on the left (the end is
+# what matters), everything else on the right; names via printable-binary;
+# any remaining | in a cell becomes ∣ so the frame stays parseable.
+out="$(run_in_tmp --cols 10,6,8 dump -r fmt)"; rc=$?
+assert_rc 0
+assert_out '+------------+--------+----------+
+| path       | name   | value    |
++------------+--------+----------+
+| fmt/plain  | key    | one      |
+| …/we,ird∣f | k٫e_y  | a٫b∣cˮd  |
++------------+--------+----------+'
+out="$(run_in_tmp --table --cols 4,2 dump fmt/plain)"; rc=$?
+assert_out '+------+----+
+| name | v… |
++------+----+
+| key  | o… |
++------+----+'
+# Default widths: name 24, value 40 (path 48, type 4 when present).
+out="$(run_in_tmp --table dump fmt/plain)"; rc=$?
+assert_out '+--------------------------+------------------------------------------+
+| name                     | value                                    |
++--------------------------+------------------------------------------+
+| key                      | one                                      |
++--------------------------+------------------------------------------+'
+out="$(run_in_tmp --table lst fmt/plain)"; rc=$?
+assert_out '+--------------------------+
+| name                     |
++--------------------------+
+| key                      |
++--------------------------+'
+out="$(run_in_tmp --utf8 --table --cols 4,4,4 dump fmt/plain)"; rc=$?
+assert_out '+------+------+------+
+| name | type | val… |
++------+------+------+
+| key  | utf8 | one  |
++------+------+------+'
+# Markdown: same cells, | escaped as \| in paths and utf8 values.
+out="$(run_in_tmp --md --cols 10,6,8 dump -r fmt)"; rc=$?
+assert_rc 0
+assert_out '| path       | name   | value    |
+|------------|--------|----------|
+| fmt/plain  | key    | one      |
+| …/we,ird\|f | k٫e_y  | a٫b∣cˮd  |'
+out="$(run_in_tmp --cols 4,8 --markdown dump fmt/plain)"; rc=$?
+assert_out '| name | value    |
+|------|----------|
+| key  | one      |'
+# A width of 0 means no truncation and no padding for that column.
+out="$(run_in_tmp --cols 0,0 dump fmt/plain)"; rc=$?
+assert_out '+------+-------+
+| name | value |
++------+-------+
+| key | one |
++------+-------+'
+out=""; err=""; rc=0; capture "$BIN" --cols x dump "$fmt/plain"
+assert_rc 2
+# Table flags never leak into JSON.
+out="$(run_in_tmp --json --table dump fmt/plain)"; rc=$?
+assert_out '[{"name":"key","pb":"one"}]'
 
 current="syscall budget: one listxattr per node, one getxattr per small value"
 if [[ "$(os_name)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then

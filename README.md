@@ -32,9 +32,15 @@ xattr-stream --help | -h | --version | --about
   -r, --recurse   lst/dump: walk the tree below <path>, breadth-first
   -d, --depth <n> limit the walk to n levels (0 = <path> alone); implies -r
   --depth-first   walk depth-first (pre-order) instead
-  --values        lst: show values; text, else printable-binary
-  --hex           binary values as hex instead of printable-binary
-  -w, --max-width <n>  cut displayed values after n chars: abcd…(10 bytes)
+  --values        lst: show values through printable-binary
+  --utf8          printable single-line UTF-8 values verbatim, plus a type column
+  --hex           values as lowercase hex instead of printable-binary
+  --tsv           tab-separated rows, no header (default)
+  --csv           comma-separated rows with a header
+  --table         ASCII table (widths: path 48, name 24, type 4, value 40)
+  --md, --markdown  Markdown table with the same widths
+  --cols <a,b,..> column widths in display order; implies --table unless --md
+  -w, --max-width <n>  TSV: cut displayed values after n chars: abcd…(10 bytes)
   --debug         report what a walk skipped (or set DEBUG)
   --color         force ANSI in listings; --no-color/--no-ansi/--simple never
 ```
@@ -43,19 +49,37 @@ On an interactive terminal, listings color attribute names bright orange
 and values light blue (256-color ANSI). Piped output, JSON, `NO_COLOR`, and
 `--no-color` get plain bytes; `--color` forces color into a pipe.
 
-Recursive listings print tab-separated columns: `path`, `name`, and with
-`--values` a type column (`text`, `pb` or `hex`) followed by the value. Text
-means valid UTF-8 with no control characters other than TAB. Anything else,
-including multi-line text, is rendered with
-[printable-binary](https://github.com/pmarreck/printable-binary): one line
-of UTF-8 in which every byte, including NUL and control characters, has a
-visible glyph, and which converts back to the exact bytes with
+Listings are rows of `[path] name [type] value`. The path column appears
+when recursing, the value with `--values` or `dump`, the type only with
+`--utf8`. Every value is rendered with
+[printable-binary](https://github.com/pmarreck/printable-binary) by
+default: one line of UTF-8 in which every byte, including NUL, control
+characters and delimiters, has a visible lookalike glyph (`sunny␣day`,
+`multi¶line`, `a٫b∣c`), and which converts back to the exact bytes with
 `printable-binary -d`. It is linked in as a Zig dependency and consumed the
-same way this library is, through its own C header. `--hex` switches binary
-values to lowercase hex. Values print in full unless `-w`/`--max-width n`
-is given, which cuts the displayed value after n characters (never inside a
-UTF-8 glyph) and appends `…(N bytes)` with the raw length; JSON is never
-cut. `get` is unaffected and always writes raw bytes. Children are
+same way this library is, through its own C header. Multi-byte text comes
+out as per-byte glyphs in that mode; `--utf8` shows values that are valid
+single-line UTF-8 verbatim instead and adds the type column, which says
+`utf8`, `pb` or `hex` (never a vague "text", leaving room for detected
+encodings later). `--hex` uses lowercase hex in place of printable-binary.
+`get` is unaffected and always writes raw bytes.
+
+Four row formats:
+- `--tsv` (default): tab-separated, no header. `-w`/`--max-width n` cuts a
+  displayed value after n characters, never inside a glyph, and appends
+  `…(N bytes)` with the raw length.
+- `--csv`: comma-separated with a header. Names and values always go
+  through printable-binary (so no delimiter can occur in them), paths are
+  quoted per RFC 4180 when they need it; `--utf8` is ignored here.
+- `--table`: an ASCII frame with fixed column widths, default path 48,
+  name 24, type 4, value 40. Paths truncate on the left so the end of the
+  path is always visible; other cells truncate on the right. Names go
+  through printable-binary and any `|` left in a cell becomes `∣`.
+- `--md`/`--markdown`: the same cells as a Markdown table, with `|`
+  escaped as `\|`.
+- `--cols a,b,...` sets the widths of the present columns in display order
+  (0 = no truncation, no padding) and implies `--table` unless `--md` is
+  given. JSON ignores all of these. Children are
 visited in bytewise order and listed as soon as their directory is read,
 which keeps the window for files deleted mid-walk to microseconds and the
 queue proportional to directories rather than files; symlinks are listed
@@ -66,18 +90,26 @@ read, dangling symlinks and files deleted mid-walk (browser caches churn
 like this), have nothing to list and are skipped silently; `--debug` (or a
 `DEBUG` environment variable set to anything but `0`) reports each skip on
 stderr without changing the exit code. The root path is exempt: naming a
-missing path is an error. `--json` produces an array of `{"path","name","text"|"pb"|"hex"}`
+missing path is an error. `--json` produces an array of `{"path","name","pb"|"utf8"|"hex"}`
 objects (no `path` when not recursing; plain name strings when neither
 recursing nor showing values).
 
 ```sh
 $ xattr-stream dump -r photos
-photos	owner	text	Peter
-photos/2026/beach.jpg	caption	text	sunny day
-photos/2026/beach.jpg	thumb.bin	pb	·¯żŻ
-$ xattr-stream --hex dump photos/2026/beach.jpg
-caption	text	sunny day
-thumb.bin	hex	0001feff
+photos	owner	Peter
+photos/2026/beach.jpg	caption	sunny␣day
+photos/2026/beach.jpg	thumb.bin	·¯żŻ
+$ xattr-stream --utf8 dump photos/2026/beach.jpg
+caption	utf8	sunny day
+thumb.bin	pb	·¯żŻ
+$ xattr-stream --table --cols 20,10,12 dump -r photos
++----------------------+------------+--------------+
+| path                 | name       | value        |
++----------------------+------------+--------------+
+| photos               | owner      | Peter        |
+| …otos/2026/beach.jpg | caption    | sunny␣day    |
+| …otos/2026/beach.jpg | thumb.bin  | ·¯żŻ         |
++----------------------+------------+--------------+
 ```
 
 Options go anywhere; later options override earlier ones; `--` ends options.

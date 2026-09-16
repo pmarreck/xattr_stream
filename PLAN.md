@@ -68,8 +68,12 @@ taxonomy + race handling), `src/{linux,darwin,windows}.zig` (adapters),
       fixture from the independent LuaJIT implementation (12:00 EDT)
 - [x] Colors: names bright orange, values light blue on a tty only (11:55 EDT)
 - [x] Dangling symlinks skipped in walks; `--debug`/DEBUG reports them
+- [x] Output formats (Peter, 2026-09-16 12:29 EDT): --tsv/--csv/--table/
+      --md, --cols widths, left-ellipsis paths, --utf8 with a type column
+      that says utf8|pb|hex, values and names through printable-binary in
+      delimited formats (12:45 EDT)
 - [ ] Encoding detection beyond UTF-8 (uchardetz) if legacy text values
-      ever matter
+      ever matter; the type column is ready for it
 - [ ] Design only, not building: caching a probed per-filesystem limit
       keyed by filesystem identity with invalidation (see os_counters)
 
