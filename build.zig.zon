@@ -1,15 +1,20 @@
 .{
-	.name = .xattr_stream,
-	.version = "0.2.0",
-	.minimum_zig_version = "0.16.0",
-	.fingerprint = 0xe0e7dfaa70c1c53d,
-	.dependencies = .{},
-	.paths = .{
-		"build.zig",
-		"build.zig.zon",
-		"src",
-		"include",
-		"LICENSE",
-		"README.md",
-	},
+    .name = .xattr_stream,
+    .version = "0.2.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xe0e7dfaa70c1c53d,
+    .dependencies = .{
+        .printable_binary = .{
+            .url = "https://github.com/pmarreck/printable-binary/archive/3f697d53f447144e9ba1b73c4217b382f32b4d62.tar.gz",
+            .hash = "printable_binary-1.0.0-SdPiyhUVGgBTC3HbDM1G40As8Rv-pXtMfx5nIzmSRF6f",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "include",
+        "LICENSE",
+        "README.md",
+    },
 }

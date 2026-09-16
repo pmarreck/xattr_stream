@@ -61,9 +61,15 @@ taxonomy + race handling), `src/{linux,darwin,windows}.zig` (adapters),
       (11:35 EDT)
 - [x] Listing with values: `lst --values` / `dump`; printable single-line
       UTF-8 as text, else hex; JSON mirrors it; `get` stays raw (11:35 EDT)
-- [ ] Output format review by Peter (columns: [path] name [text|hex value])
+- [x] Output format review by Peter (columns: [path] name [type value])
+- [x] Binary values via printable_binary (Peter's call, 2026-09-16 11:50
+      EDT): Zig dependency pinned in build.zig.zon + flake zigDeps FOD; the
+      C CLI links its static lib through its own header; `--hex` keeps hex;
+      fixture from the independent LuaJIT implementation (12:00 EDT)
+- [x] Colors: names bright orange, values light blue on a tty only (11:55 EDT)
+- [x] Dangling symlinks skipped in walks; `--debug`/DEBUG reports them
 - [ ] Encoding detection beyond UTF-8 (uchardetz) if legacy text values
-      ever matter; hex is the fallback until then
+      ever matter
 - [ ] Design only, not building: caching a probed per-filesystem limit
       keyed by filesystem identity with invalidation (see os_counters)
 

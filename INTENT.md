@@ -49,6 +49,9 @@ data streams were chosen; see README).
 ## Constraints and tradeoffs
 
 - Zig 0.16 only; no upgrade to 0.17 as part of this work.
+- One compile-time dependency, `printable_binary` (Peter, 2026-09-16), used
+  only by the CLI to render binary values reversibly; the library itself
+  has none.
 - MIT license retained.
 - Logical names are capped at 127 bytes because macOS is the strictest
   target; the Windows character blacklist applies on every OS so a name that

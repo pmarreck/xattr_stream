@@ -13,3 +13,5 @@ AGENTS*.md
 /MECHATRON_PRIME_CI.md
 CLAUDE*.md
 ZIG_RECENT_API_CHANGES*.md
+/tests/consumers/zig/zig-pkg/
+/zig-pkg/

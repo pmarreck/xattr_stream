@@ -18,12 +18,39 @@
         version = "0.2.0";
         src = pkgs.lib.cleanSource ./.;
 
-        # Zig needs writable cache dirs inside the sandbox; no network is
-        # required because build.zig.zon declares no dependencies.
+        # Zig dependencies (printable_binary) are fetched once into a
+        # fixed-output derivation, then copied into the sandboxed builds'
+        # global cache so `zig build` needs no network. Update the hash when
+        # build.zig.zon changes: set it to pkgs.lib.fakeHash, build, copy the
+        # reported hash back here.
+        zigDepsHash = "sha256-O4+b9IpGkTklHLoSrH8ICWMYOIdTAw8nhhjkLAL7Ufw=";
+        zigDeps = pkgs.stdenv.mkDerivation {
+          pname = "xattr_stream-zig-deps";
+          inherit version;
+          src = ./.;
+          nativeBuildInputs = [ zig pkgs.cacert ];
+          outputHashMode = "recursive";
+          outputHashAlgo = "sha256";
+          outputHash = zigDepsHash;
+          buildPhase = ''
+            export HOME=$TMPDIR
+            export ZIG_GLOBAL_CACHE_DIR=$out
+            export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+            zig build --fetch=all
+          '';
+          dontInstall = true;
+          dontFixup = true;
+        };
+
+        # Zig needs writable cache dirs inside the sandbox; dependencies come
+        # from zigDeps above.
         zigEnv = ''
           export HOME=$TMPDIR
           export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-global
           export ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-local
+          mkdir -p $ZIG_GLOBAL_CACHE_DIR
+          cp -r ${zigDeps}/. $ZIG_GLOBAL_CACHE_DIR/
+          chmod -R u+w $ZIG_GLOBAL_CACHE_DIR
           ${pkgs.lib.optionalString pkgs.stdenv.isDarwin "unset NIX_CFLAGS_COMPILE NIX_LDFLAGS"}
         '';
 

@@ -32,7 +32,8 @@ xattr-stream --help | -h | --version | --about
   -r, --recurse   lst/dump: walk the tree below <path>, breadth-first
   -d, --depth <n> limit the walk to n levels (0 = <path> alone); implies -r
   --depth-first   walk depth-first (pre-order) instead
-  --values        lst: show values; printable UTF-8 as text, else as hex
+  --values        lst: show values; text, else printable-binary
+  --hex           binary values as hex instead of printable-binary
   --debug         report what a walk skipped (or set DEBUG)
   --color         force ANSI in listings; --no-color/--no-ansi/--simple never
 ```
@@ -42,10 +43,15 @@ and values light blue (256-color ANSI). Piped output, JSON, `NO_COLOR`, and
 `--no-color` get plain bytes; `--color` forces color into a pipe.
 
 Recursive listings print tab-separated columns: `path`, `name`, and with
-`--values` a type column (`text` or `hex`) followed by the value. Text means
-valid UTF-8 with no control characters other than TAB; anything else,
-including multi-line text, is shown as lowercase hex so one line stays one
-attribute. `get` is unaffected and always writes raw bytes. Children are
+`--values` a type column (`text`, `pb` or `hex`) followed by the value. Text
+means valid UTF-8 with no control characters other than TAB. Anything else,
+including multi-line text, is rendered with
+[printable-binary](https://github.com/pmarreck/printable-binary): one line
+of UTF-8 in which every byte, including NUL and control characters, has a
+visible glyph, and which converts back to the exact bytes with
+`printable-binary -d`. It is linked in as a Zig dependency and consumed the
+same way this library is, through its own C header. `--hex` switches binary
+values to lowercase hex. `get` is unaffected and always writes raw bytes. Children are
 visited in bytewise order; symlinks are listed (per the follow policy) but
 never entered, so link loops cannot recurse. A subdirectory that cannot be
 read is reported as a warning and the walk continues, with exit code 1 at
@@ -59,7 +65,10 @@ recursing nor showing values).
 $ xattr-stream dump -r photos
 photos	owner	text	Peter
 photos/2026/beach.jpg	caption	text	sunny day
-photos/2026/beach.jpg	thumb.bin	hex	0001feff
+photos/2026/beach.jpg	thumb.bin	pb	·¯żŻ
+$ xattr-stream --hex dump photos/2026/beach.jpg
+caption	text	sunny day
+thumb.bin	hex	0001feff
 ```
 
 Options go anywhere; later options override earlier ones; `--` ends options.
@@ -177,6 +186,13 @@ nix flake check
 
 Direct use of the toolchain inside `nix develop`: `zig build`, `zig build
 test`, `zig build cross`.
+
+Dependencies are declared in two places that must agree: `build.zig.zon`
+pins `printable_binary` by URL and content hash for Zig, and `flake.nix`
+fetches the same tree into a fixed-output derivation (`zigDepsHash`) so the
+sandboxed Nix builds need no network. When `build.zig.zon` changes, set
+`zigDepsHash` to `pkgs.lib.fakeHash`, run `nix build`, and copy the hash it
+reports.
 
 ## Platform verification
 

@@ -70,16 +70,21 @@ fn makeArtifacts(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
 	});
 
 	// The CLI is C and reaches the core only through include/xattr_stream.h.
+	// Binary values in listings are rendered with printable_binary, consumed
+	// the same way: its static library through its own C header.
 	const cli_tgt = cliTarget(b, target);
 	const cli_lib = if (cli_tgt.result.abi == target.result.abi) static_lib else staticLib(b, cli_tgt, optimize);
+	const pb = b.dependency("printable_binary", .{ .target = cli_tgt, .optimize = optimize });
 	const cli_mod = b.createModule(.{
 		.target = cli_tgt,
 		.optimize = optimize,
 		.link_libc = true,
 	});
 	cli_mod.addIncludePath(b.path("include"));
+	cli_mod.addIncludePath(pb.path("src"));
 	cli_mod.addCSourceFile(.{ .file = b.path("src/xattr_stream_cli.c"), .flags = &c_flags });
 	cli_mod.linkLibrary(cli_lib);
+	cli_mod.linkLibrary(pb.artifact("printable_binary"));
 	const cli = b.addExecutable(.{
 		.name = "xattr-stream",
 		.root_module = cli_mod,

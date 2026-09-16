@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --about; do
+for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -281,9 +281,20 @@ $tree/a	a.attr	text	A
 $tree/f1	f1.attr	text	one
 $tree/f1	f1.other	text	two
 $tree/l	a.attr	text	A"
+# Binary values render as printable-binary text (one line, no control chars,
+# reversible with `printable-binary -d`). The fixture was produced by the
+# independent LuaJIT printable-binary implementation, not by this program.
+allpb="$(cat "$ROOT/tests/cli/fixtures/allbytes.pb")"
 allhex="$(od -An -v -tx1 "$allbytes" | tr -d ' \n')"
 out=""; err=""; rc=0; capture "$BIN" lst --values "$tree/a/x/deep"
+assert_out "deep.attr	pb	$allpb"
+out=""; err=""; rc=0; capture "$BIN" --hex lst --values "$tree/a/x/deep"
 assert_out "deep.attr	hex	$allhex"
+printf '\x00\x01\xfe\xff' | "$BIN" put "$tree/a/x/deep" small.bin
+out=""; err=""; rc=0; capture "$BIN" dump "$tree/a/x/deep"
+assert_out "deep.attr	pb	$allpb
+small.bin	pb	·¯żŻ"
+"$BIN" del "$tree/a/x/deep" small.bin
 out=""; err=""; rc=0; capture "$BIN" lst --values "$tree/b/z"
 assert_out "z.attr	text	"
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
@@ -291,6 +302,10 @@ assert_out "f1.attr	text	one
 f1.other	text	two"
 printf 'multi\nline' | "$BIN" put "$tree/f1" f1.multi
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
+assert_out "f1.attr	text	one
+f1.multi	pb	multi¶line
+f1.other	text	two"
+out=""; err=""; rc=0; capture "$BIN" --hex dump "$tree/f1"
 assert_out "f1.attr	text	one
 f1.multi	hex	6d756c74690a6c696e65
 f1.other	text	two"
@@ -302,8 +317,12 @@ assert_rc 0
 assert_out "[{\"path\":\"$tree\",\"name\":\"root.attr\"},{\"path\":\"$tree/a\",\"name\":\"a.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.other\"},{\"path\":\"$tree/l\",\"name\":\"a.attr\"}]"
 out=""; err=""; rc=0; capture "$BIN" --json lst --values "$tree/f1"
 assert_out '[{"name":"f1.attr","text":"one"},{"name":"f1.other","text":"two"}]'
+printf '\x00\x01\xfe\xff' | "$BIN" put "$tree/a/x/deep" small.bin
 out=""; err=""; rc=0; capture "$BIN" --json dump "$tree/a/x/deep"
-assert_out "[{\"name\":\"deep.attr\",\"hex\":\"$allhex\"}]"
+[[ "$out" == *'{"name":"small.bin","pb":"·¯żŻ"}'* ]] && pass || fail "json pb value: '$out'"
+out=""; err=""; rc=0; capture "$BIN" --json --hex dump "$tree/a/x/deep"
+[[ "$out" == *'{"name":"small.bin","hex":"0001feff"}'* ]] && pass || fail "json hex value: '$out'"
+"$BIN" del "$tree/a/x/deep" small.bin
 
 current="dangling symlinks are skipped silently when recursing"
 ln -s does-not-exist "$tree/dangling"

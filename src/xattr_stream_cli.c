@@ -7,6 +7,7 @@
  * 7 path not found, 8 invalid name or path.
  */
 #include "xattr_stream.h"
+#include "printable_binary.h" /* binary values in listings, via its own C ABI */
 
 #include <errno.h>
 #include <inttypes.h>
@@ -57,6 +58,7 @@ typedef struct {
 	int depth_first;
 	int values;
 	int debug; /* --debug, or DEBUG env set to anything but "" or "0" */
+	int hex;   /* --hex: binary values as hex instead of printable-binary */
 	int color; /* -1 auto (tty and no NO_COLOR), 0 off, 1 forced */
 	int use_color; /* resolved for this run */
 } cli_opts;
@@ -134,7 +136,9 @@ static void usage(FILE *out) {
 		"  -d, --depth <n> lst/dump: limit the walk to n levels (0 = <path> alone);\n"
 		"                  implies --recurse; also -d=<n> / --depth=<n>\n"
 		"  --depth-first   lst/dump: walk depth-first (pre-order) instead\n"
-		"  --values        lst: show values; printable UTF-8 as text, else as hex\n"
+		"  --values        lst: show values; printable UTF-8 as text, anything else\n"
+		"                  as printable-binary (decode with `printable-binary -d`)\n"
+		"  --hex           show binary values as lowercase hex instead\n"
 		"  --debug         also report what a recursive walk skipped, e.g. dangling\n"
 		"                  symlinks (or set the DEBUG environment variable)\n"
 		"  --color         force ANSI color in listings (default: only on a terminal,\n"
@@ -377,6 +381,19 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 		}
 		is_text = xs_is_display_text(v.data, v.len);
 	}
+	/* Binary values: printable-binary by default (one reversible line of
+	 * UTF-8 with no control characters), hex on request or if encoding fails. */
+	const char *type = "text";
+	pb_ffi_result_t pb = {0};
+	if (o->values && !is_text) {
+		type = "hex";
+		if (!o->hex) {
+			pb = pb_encode((const char *)v.data, v.len, PB_ENCODE_NONE, NULL, 0);
+			if (pb.error_code == 0 && (pb.data || pb.len == 0)) type = "pb";
+			else if (pb.data) { pb_free(pb.data, pb.len); pb.data = NULL; }
+		}
+	}
+	int is_pb = strcmp(type, "pb") == 0;
 	if (o->json) {
 		if (!c->json_first) fputc(',', stdout);
 		c->json_first = 0;
@@ -392,9 +409,11 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 			fputs("\"name\":", stdout);
 			json_string(stdout, name, name_len);
 			if (o->values) {
-				fputs(is_text ? ",\"text\":" : ",\"hex\":", stdout);
+				fprintf(stdout, ",\"%s\":", type);
 				if (is_text) {
 					json_string(stdout, v.data, v.len);
+				} else if (is_pb) {
+					json_string(stdout, (const unsigned char *)pb.data, pb.len);
 				} else {
 					fputc('"', stdout);
 					print_hex(stdout, v.data, v.len);
@@ -412,14 +431,16 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 		fwrite(name, 1, name_len, stdout);
 		if (o->use_color) fputs(ANSI_RESET, stdout);
 		if (o->values) {
-			fputs(is_text ? "\ttext\t" : "\thex\t", stdout);
+			fprintf(stdout, "\t%s\t", type);
 			if (o->use_color) fputs(ANSI_VALUE, stdout);
 			if (is_text) fwrite(v.data, 1, v.len, stdout);
+			else if (is_pb) fwrite(pb.data, 1, pb.len, stdout);
 			else print_hex(stdout, v.data, v.len);
 			if (o->use_color) fputs(ANSI_RESET, stdout);
 		}
 		fputc('\n', stdout);
 	}
+	if (pb.data) pb_free(pb.data, pb.len);
 	if (o->values) xs_buffer_free(&v);
 }
 
@@ -525,6 +546,7 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--depth-first") == 0) { o.depth_first = 1; continue; }
 			if (strcmp(a, "--values") == 0) { o.values = 1; continue; }
 			if (strcmp(a, "--debug") == 0) { o.debug = 1; continue; }
+			if (strcmp(a, "--hex") == 0) { o.hex = 1; continue; }
 			if (strcmp(a, "--color") == 0) { o.color = 1; continue; }
 			if (strcmp(a, "--no-color") == 0 || strcmp(a, "--no-ansi") == 0 || strcmp(a, "--simple") == 0) { o.color = 0; continue; }
 			if (strcmp(a, "-d") == 0 || strcmp(a, "--depth") == 0 ||
