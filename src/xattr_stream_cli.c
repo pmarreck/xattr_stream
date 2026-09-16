@@ -59,6 +59,7 @@ typedef struct {
 	int values;
 	int debug; /* --debug, or DEBUG env set to anything but "" or "0" */
 	int hex;   /* --hex: binary values as hex instead of printable-binary */
+	size_t max_width; /* -w/--max-width: displayed value chars, 0 = unlimited */
 	int color; /* -1 auto (tty and no NO_COLOR), 0 off, 1 forced */
 	int use_color; /* resolved for this run */
 } cli_opts;
@@ -139,6 +140,8 @@ static void usage(FILE *out) {
 		"  --values        lst: show values; printable UTF-8 as text, anything else\n"
 		"                  as printable-binary (decode with `printable-binary -d`)\n"
 		"  --hex           show binary values as lowercase hex instead\n"
+		"  -w, --max-width <n>  cut displayed values after n characters, appending\n"
+		"                  ...(N bytes); 0 = unlimited; never applies to --json\n"
 		"  --debug         also report what a recursive walk skipped, e.g. dangling\n"
 		"                  symlinks (or set the DEBUG environment variable)\n"
 		"  --color         force ANSI color in listings (default: only on a terminal,\n"
@@ -346,6 +349,48 @@ static void print_hex(FILE *out, const unsigned char *p, size_t n) {
 	}
 }
 
+static char *hex_alloc(const unsigned char *p, size_t n) {
+	static const char hx[] = "0123456789abcdef";
+	char *s = malloc(n * 2 + 1);
+	if (!s) return NULL;
+	for (size_t i = 0; i < n; i++) {
+		s[2 * i] = hx[p[i] >> 4];
+		s[2 * i + 1] = hx[p[i] & 15];
+	}
+	s[2 * n] = '\0';
+	return s;
+}
+
+/* Byte length of the first max_chars code points of valid UTF-8 (a code
+ * point starts at any byte that is not a 10xxxxxx continuation byte), so a
+ * width cut never splits a multi-byte glyph. */
+static size_t utf8_prefix_bytes(const unsigned char *p, size_t len, size_t max_chars) {
+	size_t chars = 0, i = 0;
+	while (i < len) {
+		if ((p[i] & 0xC0) != 0x80) {
+			if (chars == max_chars) break;
+			chars++;
+		}
+		i++;
+	}
+	return i;
+}
+
+/* Prints a displayed value, cut to o->max_width characters with an
+ * ellipsis and the raw byte count when it does not fit. */
+static void print_value(const cli_opts *o, const unsigned char *disp, size_t disp_len, size_t raw_len) {
+	size_t shown = disp_len;
+	int cut = 0;
+	if (o->max_width > 0) {
+		shown = utf8_prefix_bytes(disp, disp_len, o->max_width);
+		cut = shown < disp_len;
+	}
+	if (o->use_color) fputs(ANSI_VALUE, stdout);
+	fwrite(disp, 1, shown, stdout);
+	if (o->use_color) fputs(ANSI_RESET, stdout);
+	if (cut) fprintf(stdout, "\xe2\x80\xa6(%zu bytes)", raw_len);
+}
+
 static void warn_path(lst_ctx *c, const char *path, size_t path_len, const unsigned char *name, size_t name_len, int status) {
 	c->failures++;
 	if (c->o->quiet) return;
@@ -432,11 +477,19 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 		if (o->use_color) fputs(ANSI_RESET, stdout);
 		if (o->values) {
 			fprintf(stdout, "\t%s\t", type);
-			if (o->use_color) fputs(ANSI_VALUE, stdout);
-			if (is_text) fwrite(v.data, 1, v.len, stdout);
-			else if (is_pb) fwrite(pb.data, 1, pb.len, stdout);
-			else print_hex(stdout, v.data, v.len);
-			if (o->use_color) fputs(ANSI_RESET, stdout);
+			if (is_text) {
+				print_value(o, v.data, v.len, v.len);
+			} else if (is_pb) {
+				print_value(o, (const unsigned char *)pb.data, pb.len, v.len);
+			} else {
+				char *hx = hex_alloc(v.data, v.len);
+				if (hx) {
+					print_value(o, (const unsigned char *)hx, v.len * 2, v.len);
+					free(hx);
+				} else {
+					print_hex(stdout, v.data, v.len);
+				}
+			}
 		}
 		fputc('\n', stdout);
 	}
@@ -547,6 +600,20 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--values") == 0) { o.values = 1; continue; }
 			if (strcmp(a, "--debug") == 0) { o.debug = 1; continue; }
 			if (strcmp(a, "--hex") == 0) { o.hex = 1; continue; }
+			if (strcmp(a, "-w") == 0 || strcmp(a, "--max-width") == 0 ||
+			    strncmp(a, "-w=", 3) == 0 || strncmp(a, "--max-width=", 12) == 0) {
+				const char *num = strchr(a, '=');
+				if (num) num++;
+				else if (i + 1 < argc) num = argv[++i];
+				uint64_t w = 0;
+				if (parse_u64(num, &w) != 0 || w > SIZE_MAX) {
+					fprintf(stderr, PROG ": --max-width needs a non-negative integer\n");
+					usage(stderr);
+					return EXIT_USAGE;
+				}
+				o.max_width = (size_t)w;
+				continue;
+			}
 			if (strcmp(a, "--color") == 0) { o.color = 1; continue; }
 			if (strcmp(a, "--no-color") == 0 || strcmp(a, "--no-ansi") == 0 || strcmp(a, "--simple") == 0) { o.color = 0; continue; }
 			if (strcmp(a, "-d") == 0 || strcmp(a, "--depth") == 0 ||

@@ -34,6 +34,7 @@ xattr-stream --help | -h | --version | --about
   --depth-first   walk depth-first (pre-order) instead
   --values        lst: show values; text, else printable-binary
   --hex           binary values as hex instead of printable-binary
+  -w, --max-width <n>  cut displayed values after n chars: abcd…(10 bytes)
   --debug         report what a walk skipped (or set DEBUG)
   --color         force ANSI in listings; --no-color/--no-ansi/--simple never
 ```
@@ -51,7 +52,10 @@ of UTF-8 in which every byte, including NUL and control characters, has a
 visible glyph, and which converts back to the exact bytes with
 `printable-binary -d`. It is linked in as a Zig dependency and consumed the
 same way this library is, through its own C header. `--hex` switches binary
-values to lowercase hex. `get` is unaffected and always writes raw bytes. Children are
+values to lowercase hex. Values print in full unless `-w`/`--max-width n`
+is given, which cuts the displayed value after n characters (never inside a
+UTF-8 glyph) and appends `…(N bytes)` with the raw length; JSON is never
+cut. `get` is unaffected and always writes raw bytes. Children are
 visited in bytewise order; symlinks are listed (per the follow policy) but
 never entered, so link loops cannot recurse. A subdirectory that cannot be
 read is reported as a warning and the walk continues, with exit code 1 at

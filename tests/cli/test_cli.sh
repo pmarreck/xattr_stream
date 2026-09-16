@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --about; do
+for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -352,6 +352,42 @@ assert_err_empty
 out=""; err=""; rc=0; capture "$BIN" --json --debug lst -r "$tree"
 [[ "$err" =~ ^\{\"debug\": ]] && pass || fail "json debug note: '$err'"
 rm -f "$tree/dangling"
+
+current="max width truncates displayed values with an ellipsis and byte count"
+ESC=$'\e'
+wf="$(new_file wide)"
+printf 'abcdefghij' | "$BIN" put "$wf" long
+printf 'one' | "$BIN" put "$wf" short
+printf 'ünï' | "$BIN" put "$wf" uni
+printf '\x00\x01\xfe\xff' | "$BIN" put "$wf" bin
+for form in "-w 4" "-w=4" "--max-width 4" "--max-width=4"; do
+	# shellcheck disable=SC2086
+	out=""; err=""; rc=0; capture "$BIN" dump $form "$wf"
+	assert_rc 0
+	assert_out "bin	pb	·¯żŻ
+long	text	abcd…(10 bytes)
+short	text	one
+uni	text	ünï"
+done
+# Cuts fall on code points, never inside a UTF-8 sequence.
+out=""; err=""; rc=0; capture "$BIN" dump -w 2 "$wf"
+assert_out "bin	pb	·¯…(4 bytes)
+long	text	ab…(10 bytes)
+short	text	on…(3 bytes)
+uni	text	ün…(5 bytes)"
+out=""; err=""; rc=0; capture "$BIN" --hex dump -w 4 "$wf"
+[[ "$out" == *"bin	hex	0001…(4 bytes)"* ]] && pass || fail "hex truncation: '$out'"
+out=""; err=""; rc=0; capture "$BIN" dump -w 8 "$tree/a/x/deep"
+assert_out "deep.attr	pb	·¯«»ϟ¿¡ª…(256 bytes)"
+# 0 means unlimited; JSON is never truncated; garbage is a usage error.
+out=""; err=""; rc=0; capture "$BIN" dump -w 4 -w 0 "$wf"
+[[ "$out" == *"long	text	abcdefghij"* ]] && pass || fail "-w 0 should lift the limit: '$out'"
+out=""; err=""; rc=0; capture "$BIN" --json dump -w 4 "$wf"
+[[ "$out" == *'{"name":"long","text":"abcdefghij"}'* ]] && pass || fail "JSON must not be truncated: '$out'"
+out=""; err=""; rc=0; capture "$BIN" dump -w nope "$wf"
+assert_rc 2
+out=""; err=""; rc=0; capture "$BIN" --color dump -w 4 "$wf"
+[[ "$out" == *"${ESC}[38;5;208mlong${ESC}[0m	text	${ESC}[38;5;117mabcd${ESC}[0m…(10 bytes)"* ]] && pass || fail "colored truncation: '$out'"
 
 current="ansi color: names bright orange, values light blue, only on a terminal"
 ESC=$'\e'
