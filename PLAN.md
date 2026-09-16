@@ -43,15 +43,14 @@ taxonomy + race handling), `src/{linux,darwin,windows}.zig` (adapters),
 
 ## Open
 
-- [ ] Commit the known-good state (after ./test and nix flake check pass)
-- [ ] Mechatron Prime: provision webhook (needs Peter's go-ahead for GitHub
-      webhook changes), push yolo, verify badge after first build
+- [x] Commit the known-good state as 2ed4ca8 and push yolo (23:40 EDT)
+- [x] Mechatron Prime: webhook already existed; 2ed4ca8 PASS in 3m16s (23:43 EDT)
 - [ ] Runtime verification on aarch64 Linux, macOS, Windows (no machine here)
 - [ ] macOS signed-app xattr assessment: needs a Mac, isolated artifacts, and
       a throwaway signing identity; report as pending
 - [ ] Decide whether bin/xattr_stream_ape.com (legacy Cosmopolitan binary)
       stays tracked; it no longer matches any source
-- [ ] Final durable report to Einstein referencing the original note
+- [x] Final durable report to Einstein; original note Trashed (23:42 EDT)
 
 ## Known limits (documented in README)
 
