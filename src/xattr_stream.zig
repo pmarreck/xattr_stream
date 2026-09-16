@@ -134,6 +134,10 @@ pub fn statusName(code: c_int) [:0]const u8 {
 pub const default_max_value_len: usize = 64 << 10;
 /// Bounded retries when a value changes between size query and read.
 pub const max_get_attempts: usize = 4;
+/// First attempt at any read or listing goes into a stack buffer of this
+/// size, so values and name lists that fit cost one syscall instead of a
+/// size query plus a read. Matches XS_PORTABLE_VALUE_LEN.
+pub const optimistic_read_len: usize = 4096;
 
 pub const Options = struct {
 	/// Operate on the symlink target (true) or the link itself (false).
@@ -225,6 +229,18 @@ pub fn get(allocator: std.mem.Allocator, path: []const u8, name: []const u8, opt
 /// as `error.Changed`; a value that shrank is returned at its actual length.
 /// Generic over the adapter so the race handling is unit-testable.
 pub fn getWith(comptime Adapter: type, allocator: std.mem.Allocator, path: [*:0]const u8, name: [*:0]const u8, nofollow: bool, max_value_len: usize) Error![]u8 {
+	// Optimistic path: most values are small, so read straight into a stack
+	// buffer and only fall back to size-query-then-read when it overflows.
+	var small: [optimistic_read_len]u8 = undefined;
+	if (Adapter.read(path, name, nofollow, &small)) |got| {
+		if (got > max_value_len) return error.TooLarge;
+		const out = allocator.alloc(u8, got) catch return error.OutOfMemory;
+		@memcpy(out, small[0..got]);
+		return out;
+	} else |e| switch (e) {
+		error.BufferTooSmall => {},
+		else => return e,
+	}
 	var attempt: usize = 0;
 	while (attempt < max_get_attempts) : (attempt += 1) {
 		const expected = try Adapter.size(path, name, nofollow);

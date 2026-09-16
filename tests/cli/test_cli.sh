@@ -418,6 +418,17 @@ if [[ "$(os_name)" == "Linux" ]] && command -v script >/dev/null 2>&1; then
 	[[ "$out" != *"$ESC"* ]] && pass || fail "NO_COLOR should disable ANSI on a pty"
 fi
 
+current="syscall budget: one listxattr per node, one getxattr per small value"
+if [[ "$(os_name)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then
+	sc="$tmpdir/strace.txt"
+	strace -f -e trace=listxattr,getxattr -c -o "$sc" "$BIN" lst -r "$tree" >/dev/null 2>&1
+	n_list="$(awk '$NF=="listxattr"{print $4}' "$sc")"
+	[[ "${n_list:-0}" -eq 9 ]] && pass || fail "expected 9 listxattr for 9 visited nodes, got '${n_list:-0}'"
+	strace -f -e trace=listxattr,getxattr -c -o "$sc" "$BIN" dump -r "$tree" >/dev/null 2>&1
+	n_get="$(awk '$NF=="getxattr"{print $4}' "$sc")"
+	[[ "${n_get:-0}" -eq 7 ]] && pass || fail "expected 7 getxattr for 7 small values, got '${n_get:-0}'"
+fi
+
 current="unreadable subdirectory is a warning, not a stop"
 if [[ "$(id -u)" -ne 0 ]]; then
 	chmod 000 "$tree/b"

@@ -150,7 +150,8 @@ pub const FsLister = struct {
 		defer dir.close(io);
 		var out: std.ArrayList(Entry) = .empty;
 		errdefer freeEntries(allocator, out.items);
-		var it = dir.iterate();
+		// The handle was just opened, so no rewind (lseek) is needed.
+		var it = dir.iterateAssumeFirstIteration();
 		while (it.next(io) catch |e| return mapIoError(e)) |entry| {
 			const name = allocator.dupe(u8, entry.name) catch return error.OutOfMemory;
 			out.append(allocator, .{ .name = name, .kind = kindFromFile(entry.kind) }) catch {

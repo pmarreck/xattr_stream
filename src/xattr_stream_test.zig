@@ -342,35 +342,68 @@ test "concurrent writers and readers on one file never corrupt a value" {
 	try expectEqual(@as(usize, 9), l.count);
 }
 
-/// Fake adapter: the value grows on every size query, so the size-then-read
-/// race never settles. Exercises the bounded retry in the core.
+/// Fake adapter: a value larger than the optimistic buffer that grows on
+/// every size query, so the size-then-read race never settles. Exercises the
+/// bounded retry in the core.
 const GrowingAdapter = struct {
 	var reported: usize = 0;
 	pub fn size(_: [*:0]const u8, _: [*:0]const u8, _: bool) xs.Error!usize {
 		reported += 1;
-		return reported;
+		return xs.optimistic_read_len + reported;
 	}
 	pub fn read(_: [*:0]const u8, _: [*:0]const u8, _: bool, buf: []u8) xs.Error!usize {
-		if (buf.len < reported + 1) return error.BufferTooSmall;
-		return reported + 1;
+		if (buf.len < xs.optimistic_read_len + reported + 1) return error.BufferTooSmall;
+		return xs.optimistic_read_len + reported + 1;
 	}
 };
 
-/// Fake adapter: the value shrinks between the size query and the read.
+/// Fake adapter: reports a large value, then delivers a short one, so the
+/// core must return the actual length after the size-query path.
 const ShrinkingAdapter = struct {
 	pub fn size(_: [*:0]const u8, _: [*:0]const u8, _: bool) xs.Error!usize {
-		return 10;
+		return xs.optimistic_read_len + 1000;
 	}
 	pub fn read(_: [*:0]const u8, _: [*:0]const u8, _: bool, buf: []u8) xs.Error!usize {
+		if (buf.len < xs.optimistic_read_len + 1000) return error.BufferTooSmall;
 		@memcpy(buf[0..3], "abc");
 		return 3;
 	}
 };
 
+/// Fake adapter: a small value. The core must fetch it with a single read
+/// and never query the size (one syscall per attribute on a real OS).
+const SmallAdapter = struct {
+	var size_calls: usize = 0;
+	var read_calls: usize = 0;
+	pub fn size(_: [*:0]const u8, _: [*:0]const u8, _: bool) xs.Error!usize {
+		size_calls += 1;
+		return 5;
+	}
+	pub fn read(_: [*:0]const u8, _: [*:0]const u8, _: bool, buf: []u8) xs.Error!usize {
+		read_calls += 1;
+		if (buf.len < 5) return error.BufferTooSmall;
+		@memcpy(buf[0..5], "hello");
+		return 5;
+	}
+};
+
+test "get: a small value costs one read and no size query" {
+	SmallAdapter.size_calls = 0;
+	SmallAdapter.read_calls = 0;
+	const got = try xs.getWith(SmallAdapter, alloc, "p", "n", false, 1 << 20);
+	defer alloc.free(got);
+	try expectEqualStrings("hello", got);
+	try expectEqual(@as(usize, 1), SmallAdapter.read_calls);
+	try expectEqual(@as(usize, 0), SmallAdapter.size_calls);
+	// The bound still applies even when the value would fit the optimistic buffer.
+	try expectError(error.TooLarge, xs.getWith(SmallAdapter, alloc, "p", "n", false, 4));
+}
+
 test "get: a value that keeps growing is reported as Changed after bounded retries" {
 	GrowingAdapter.reported = 0;
 	try expectError(error.Changed, xs.getWith(GrowingAdapter, alloc, "p", "n", false, 1 << 20));
 	try expectEqual(xs.max_get_attempts, GrowingAdapter.reported);
+	try expectEqual(@as(usize, 4096), xs.optimistic_read_len);
 }
 
 test "get: a value that shrinks is returned at its actual length" {

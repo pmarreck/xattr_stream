@@ -64,6 +64,15 @@ pub fn remove(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool) Error!vo
 }
 
 pub fn listRaw(allocator: std.mem.Allocator, path: [*:0]const u8, nofollow: bool) Error![]u8 {
+	// One syscall for the common case; the size-query loop below only runs
+	// when the list overflows the stack buffer (ERANGE).
+	var small: [core.optimistic_read_len]u8 = undefined;
+	const first = listxattr(path, &small, small.len, opts(nofollow));
+	if (first >= 0) {
+		return allocator.dupe(u8, small[0..@intCast(first)]) catch return error.OutOfMemory;
+	}
+	const first_err = errnoNow();
+	if (first_err != .RANGE) return mapErrno(first_err, .generic);
 	var attempt: usize = 0;
 	while (attempt < core.max_get_attempts) : (attempt += 1) {
 		const q = listxattr(path, null, 0, opts(nofollow));
