@@ -66,7 +66,7 @@ read, dangling symlinks and files deleted mid-walk (browser caches churn
 like this), have nothing to list and are skipped silently; `--debug` (or a
 `DEBUG` environment variable set to anything but `0`) reports each skip on
 stderr without changing the exit code. The root path is exempt: naming a
-missing path is an error. `--json` produces an array of `{"path","name","text"|"hex"}`
+missing path is an error. `--json` produces an array of `{"path","name","text"|"pb"|"hex"}`
 objects (no `path` when not recursing; plain name strings when neither
 recursing nor showing values).
 
