@@ -20,8 +20,8 @@ xattr-stream [options] get <path> <name>       value to stdout
 xattr-stream [options] len <path> <name>       byte length, or -1 if missing
 xattr-stream [options] del <path> <name>       delete (no error if missing)
 xattr-stream [options] lst|list <path>         names, one per line, sorted
-xattr-stream [options] dump <path>             names and values (lst --values)
-xattr-stream [options] limits [<path>]         max value bytes on that filesystem, or -1
+xattr-stream [options] dmp|dump <path>         names and values (lst --values)
+xattr-stream [options] lim|limits [<path>]     max value bytes on that filesystem, or -1
 xattr-stream --help | -h | --version | --about
 
   --nofollow      operate on a symlink itself, not its target
@@ -59,9 +59,12 @@ cut. `get` is unaffected and always writes raw bytes. Children are
 visited in bytewise order; symlinks are listed (per the follow policy) but
 never entered, so link loops cannot recurse. A subdirectory that cannot be
 read is reported as a warning and the walk continues, with exit code 1 at
-the end. Dangling symlinks have nothing to list and are skipped silently;
-`--debug` (or a `DEBUG` environment variable set to anything but `0`)
-reports each skip on stderr without changing the exit code. `--json` produces an array of `{"path","name","text"|"hex"}`
+the end. Entries that cannot be found by the time their attributes are
+read, dangling symlinks and files deleted mid-walk (browser caches churn
+like this), have nothing to list and are skipped silently; `--debug` (or a
+`DEBUG` environment variable set to anything but `0`) reports each skip on
+stderr without changing the exit code. The root path is exempt: naming a
+missing path is an error. `--json` produces an array of `{"path","name","text"|"hex"}`
 objects (no `path` when not recursing; plain name strings when neither
 recursing nor showing values).
 

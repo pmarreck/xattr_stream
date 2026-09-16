@@ -122,8 +122,8 @@ static void usage(FILE *out) {
 		"  " PROG " [options] len <path> <name>       byte length, or -1 if missing\n"
 		"  " PROG " [options] del <path> <name>       delete (no error if missing)\n"
 		"  " PROG " [options] lst|list <path>         names, one per line\n"
-		"  " PROG " [options] dump <path>             names and values (alias: lst --values)\n"
-		"  " PROG " [options] limits [<path>]         max value bytes on that filesystem, or -1\n"
+		"  " PROG " [options] dmp|dump <path>         names and values (alias: lst --values)\n"
+		"  " PROG " [options] lim|limits [<path>]     max value bytes on that filesystem, or -1\n"
 		"  " PROG " --help | -h | --version | --about\n"
 		"\n"
 		"Options (any order, before or after the command; -- ends options):\n"
@@ -142,8 +142,8 @@ static void usage(FILE *out) {
 		"  --hex           show binary values as lowercase hex instead\n"
 		"  -w, --max-width <n>  cut displayed values after n characters, appending\n"
 		"                  ...(N bytes); 0 = unlimited; never applies to --json\n"
-		"  --debug         also report what a recursive walk skipped, e.g. dangling\n"
-		"                  symlinks (or set the DEBUG environment variable)\n"
+		"  --debug         also report what a recursive walk skipped: dangling symlinks\n"
+		"                  and entries deleted mid-walk (or set the DEBUG env var)\n"
 		"  --color         force ANSI color in listings (default: only on a terminal,\n"
 		"                  and never when NO_COLOR is set)\n"
 		"  --no-color      never emit ANSI (aliases: --no-ansi, --simple)\n"
@@ -515,23 +515,26 @@ static int list_one(lst_ctx *c, const char *path, size_t path_len) {
 
 static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64_t depth, int status) {
 	lst_ctx *c = (lst_ctx *)ud;
-	(void)depth;
 	if (status != XS_OK) {
 		warn_path(c, path, path_len, NULL, 0, status);
 		return 0;
 	}
 	int st = list_one(c, path, path_len);
-	/* A symlink whose target is gone has nothing to list; that is the link's
-	 * state, not an error in the walk, so it is skipped without noise unless
-	 * the user asked to see skips. */
-	if (st == XS_NOT_FOUND && kind == XS_KIND_SYMLINK) {
+	/* An entry that cannot be found any more has nothing to list: a dangling
+	 * symlink, or a file deleted between reading its directory and now
+	 * (browser caches churn like this). That is the tree's state, not an
+	 * error in the walk, so it is skipped without noise unless the user asked
+	 * to see skips. The root is exempt: the caller named it. */
+	if (st == XS_NOT_FOUND && depth > 0) {
+		const char *why = kind == XS_KIND_SYMLINK ? "dangling_symlink" : "vanished";
 		if (c->o->debug) {
 			if (c->o->json) {
-				fputs("{\"debug\":\"dangling_symlink\",\"path\":", stderr);
+				fprintf(stderr, "{\"debug\":\"%s\",\"path\":", why);
 				json_string(stderr, (const unsigned char *)path, path_len);
 				fputs("}\n", stderr);
 			} else {
-				fprintf(stderr, PROG ": debug: %.*s: dangling symlink, skipped\n", (int)path_len, path);
+				fprintf(stderr, PROG ": debug: %.*s: %s, skipped\n", (int)path_len, path,
+					kind == XS_KIND_SYMLINK ? "dangling symlink" : "vanished during the walk");
 			}
 		}
 		return 0;
@@ -667,12 +670,12 @@ int main(int argc, char **argv) {
 		if (nargs != 2) { usage(stderr); return EXIT_USAGE; }
 		return cmd_del(&o, pos[1], pos[2]);
 	}
-	if (strcmp(cmd, "lst") == 0 || strcmp(cmd, "list") == 0 || strcmp(cmd, "dump") == 0) {
+	if (strcmp(cmd, "lst") == 0 || strcmp(cmd, "list") == 0 || strcmp(cmd, "dump") == 0 || strcmp(cmd, "dmp") == 0) {
 		if (nargs != 1) { usage(stderr); return EXIT_USAGE; }
-		if (strcmp(cmd, "dump") == 0) o.values = 1;
+		if (strcmp(cmd, "dump") == 0 || strcmp(cmd, "dmp") == 0) o.values = 1;
 		return cmd_lst(&o, pos[1]);
 	}
-	if (strcmp(cmd, "limits") == 0) {
+	if (strcmp(cmd, "limits") == 0 || strcmp(cmd, "lim") == 0) {
 		if (nargs > 1) { usage(stderr); return EXIT_USAGE; }
 		return cmd_limits(&o, nargs == 1 ? pos[1] : ".");
 	}

@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump limits --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --about; do
+for word in put get len del lst dump dmp limits lim --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -300,6 +300,13 @@ assert_out "z.attr	text	"
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
 assert_out "f1.attr	text	one
 f1.other	text	two"
+# Three-letter aliases, like put/get/len/del/lst.
+out=""; err=""; rc=0; capture "$BIN" dmp "$tree/f1"
+assert_out "f1.attr	text	one
+f1.other	text	two"
+out=""; err=""; rc=0; capture "$BIN" lim "$tree/f1"
+assert_rc 0
+[[ "$out" =~ ^-?[0-9]+$ ]] && pass || fail "lim alias: '$out'"
 printf 'multi\nline' | "$BIN" put "$tree/f1" f1.multi
 out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
 assert_out "f1.attr	text	one
