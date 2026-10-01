@@ -47,6 +47,27 @@ consumer_rust() {
 consumer_luajit() {
 	luajit tests/consumers/luajit/consumer.lua "zig-out/lib/libxattr_stream$shared_ext"
 }
+# Builds the C consumer from nothing but what pkg-config reports, the way an
+# outside project would, against the installed tree (relocatable .pc file).
+consumer_pkgconfig() {
+	local pc_path="$ROOT/zig-out/lib/pkgconfig" flags libdir private all word
+	libdir="$(PKG_CONFIG_PATH="$pc_path" pkg-config --variable=libdir xattr_stream)" || return 1
+	# Static: -l would pick the .so when both exist, so link the archive from
+	# the reported libdir plus the private libs, as a static consumer would.
+	flags="$(PKG_CONFIG_PATH="$pc_path" pkg-config --cflags xattr_stream)" || return 1
+	all="$(PKG_CONFIG_PATH="$pc_path" pkg-config --libs --static xattr_stream)" || return 1
+	private=""
+	for word in $all; do
+		[[ "$word" == -lxattr_stream || "$word" == -L* ]] || private+=" $word"
+	done
+	# shellcheck disable=SC2086 # word splitting of pkg-config flags is intended
+	clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_static" tests/consumers/c/consumer.c $flags "$libdir/libxattr_stream.a" $private || return 1
+	"$TMPDIR/xs_consumer_pc_static" || return 1
+	flags="$(PKG_CONFIG_PATH="$pc_path" pkg-config --cflags --libs xattr_stream)" || return 1
+	# shellcheck disable=SC2086
+	clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_shared" tests/consumers/c/consumer.c $flags -Wl,-rpath,"$libdir" || return 1
+	"$TMPDIR/xs_consumer_pc_shared"
+}
 consumer_zig() {
 	(cd tests/consumers/zig && zig build test)
 }
@@ -54,6 +75,7 @@ consumer_zig() {
 if command -v clang >/dev/null 2>&1; then step "consumer: C (clang)" consumer_c; else echo "skip: clang not found"; fi
 if command -v rustc >/dev/null 2>&1; then step "consumer: Rust" consumer_rust; else echo "skip: rustc not found"; fi
 if command -v luajit >/dev/null 2>&1; then step "consumer: LuaJIT" consumer_luajit; else echo "skip: luajit not found"; fi
+if command -v clang >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1; then step "consumer: C via pkg-config" consumer_pkgconfig; else echo "skip: clang or pkg-config not found"; fi
 step "consumer: Zig module" consumer_zig
 
 printf '\n'

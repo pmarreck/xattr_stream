@@ -206,6 +206,33 @@ zero. Buffers returned by `xs_get` and `xs_list` are released with
 `xs_buffer_free`, never `free()`. Working examples for each language are the
 consumer tests under `tests/consumers/`.
 
+### From another project
+
+The install tree carries `lib/pkgconfig/xattr_stream.pc`. Its prefix is
+relative to the file itself, so it works from `zig-out/`, the Nix store, or a
+copied tree:
+
+```sh
+cc app.c $(PKG_CONFIG_PATH=/path/to/prefix/lib/pkgconfig pkg-config --cflags --libs xattr_stream)
+```
+
+`-lxattr_stream` picks the shared library when both are installed. For a
+static link, name `$(pkg-config --variable=libdir xattr_stream)/libxattr_stream.a`
+directly and add `pkg-config --libs --static`'s private libraries.
+
+From another flake, add the overlay and use `pkgs.xattr_stream`:
+
+```nix
+inputs.xattr_stream.url = "github:pmarreck/xattr_stream";
+# ...
+pkgs = import nixpkgs { inherit system; overlays = [ xattr_stream.overlays.default ]; };
+# then: nativeBuildInputs = [ pkgs.pkg-config ]; buildInputs = [ pkgs.xattr_stream ];
+```
+
+The `test-overlay-pkgconfig` check does exactly this with the C consumer.
+Zig projects should use a `build.zig.zon` dependency and the `xattr_stream`
+module instead.
+
 ## Windows: streams, not EAs
 
 Windows offers two candidates. NTFS extended attributes are capped at 64 KiB
@@ -221,7 +248,7 @@ reach `CreateFileW`, so `:`, `\` and `/` can never turn a name into a path.
 ```sh
 ./build        # nix build, ReleaseFast, mirrors into zig-out/
 ./build_all    # all five targets into zig-out/cross/<triple>/
-./test         # Zig tests, CLI suite, and C/Rust/LuaJIT/Zig consumers
+./test         # Zig tests, CLI suite, C/Rust/LuaJIT/Zig consumers, pkg-config consumer
 nix flake check
 ```
 

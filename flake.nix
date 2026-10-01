@@ -11,6 +11,14 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, zig-overlay }:
+    {
+      # For other flakes: add `xattr_stream.overlays.default` to nixpkgs
+      # overlays, then use `pkgs.xattr_stream` (bin/, lib/, include/, and
+      # lib/pkgconfig/xattr_stream.pc), e.g. in buildInputs with pkg-config.
+      overlays.default = final: prev: {
+        xattr_stream = self.packages.${prev.stdenv.hostPlatform.system}.default;
+      };
+    } //
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -145,6 +153,30 @@
             zig build
             luajit tests/consumers/luajit/consumer.lua zig-out/lib/libxattr_stream${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}
           '';
+          # An outside flake's view: nixpkgs extended with our overlay, then
+          # the C consumer built from nothing but pkg-config output against
+          # the installed package (proves the .pc file, install layout, and
+          # overlay together).
+          test-overlay-pkgconfig =
+            let
+              opkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
+            in
+            opkgs.stdenv.mkDerivation {
+              name = "xattr_stream-test-overlay-pkgconfig";
+              src = ./tests/consumers/c;
+              nativeBuildInputs = [ opkgs.pkg-config ];
+              buildInputs = [ opkgs.xattr_stream ];
+              dontConfigure = true;
+              buildPhase = ''
+                $CC -std=c99 -Wall -Wextra -Werror -pedantic -o consumer consumer.c \
+                  $(pkg-config --cflags --libs xattr_stream)
+                ./consumer
+              '';
+              installPhase = ''
+                mkdir -p $out
+                echo passed > $out/test-overlay-pkgconfig
+              '';
+            };
           test-consumer-zig = mkCheck "test-consumer-zig" [ ] ''
             cd tests/consumers/zig && zig build test
           '';
@@ -154,6 +186,7 @@
           buildInputs = with pkgs; [
             zig
             clang
+            pkg-config
             luajit
             rustc
             bashInteractive

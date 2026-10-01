@@ -24,6 +24,32 @@ fn coreNeedsLibc(target: std.Build.ResolvedTarget) bool {
 	return target.result.os.tag == .macos;
 }
 
+/// pkg-config metadata for C/Rust/other consumers. The prefix is derived from
+/// `${pcfiledir}` so the same file works from zig-out/, the Nix store, or any
+/// copied install tree (relocatable). Libs.private lists what a static link
+/// needs beyond the archive itself.
+fn pkgConfigFile(b: *std.Build, target: std.Build.ResolvedTarget) std.Build.LazyPath {
+	const private_libs = switch (target.result.os.tag) {
+		.windows => "-lkernel32",
+		else => "",
+	};
+	const contents = b.fmt(
+		\\prefix=${{pcfiledir}}/../..
+		\\libdir=${{prefix}}/lib
+		\\includedir=${{prefix}}/include
+		\\
+		\\Name: xattr_stream
+		\\Description: Cross-platform binary-safe file attributes (C ABI)
+		\\URL: https://github.com/pmarreck/xattr_stream
+		\\Version: {s}
+		\\Cflags: -I${{includedir}}
+		\\Libs: -L${{libdir}} -lxattr_stream
+		\\Libs.private: {s}
+		\\
+	, .{ @import("build.zig.zon").version, private_libs });
+	return b.addWriteFiles().add("xattr_stream.pc", contents);
+}
+
 /// On Linux the CLI is built against musl so it is a fully static binary that
 /// runs on any distribution (and inside the Nix sandbox, which has no
 /// /lib64 loader for a glibc-linked executable). Libraries keep the
@@ -112,6 +138,7 @@ pub fn build(b: *std.Build) void {
 	b.getInstallStep().dependOn(&b.addInstallArtifact(native.shared, .{ .implib_dir = .disabled }).step);
 	b.installArtifact(native.cli);
 	b.installFile("include/xattr_stream.h", "include/xattr_stream.h");
+	b.getInstallStep().dependOn(&b.addInstallFile(pkgConfigFile(b, target), "lib/pkgconfig/xattr_stream.pc").step);
 
 	const lib_step = b.step("lib", "Build only the static and shared libraries");
 	lib_step.dependOn(&native.static.step);

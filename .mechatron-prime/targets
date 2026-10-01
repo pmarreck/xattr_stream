@@ -9,3 +9,4 @@ checks.x86_64-linux.test-consumer-c
 checks.x86_64-linux.test-consumer-rust
 checks.x86_64-linux.test-consumer-luajit
 checks.x86_64-linux.test-consumer-zig
+checks.x86_64-linux.test-overlay-pkgconfig
