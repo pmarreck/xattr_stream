@@ -50,12 +50,16 @@ consumer_luajit() {
 # Builds the C consumer from nothing but what pkg-config reports, the way an
 # outside project would, against the installed tree (relocatable .pc file).
 consumer_pkgconfig() {
-	local pc_path="$ROOT/zig-out/lib/pkgconfig" flags libdir private all word
-	libdir="$(PKG_CONFIG_PATH="$pc_path" pkg-config --variable=libdir xattr_stream)" || return 1
+	# The .pc file is named by path rather than through PKG_CONFIG_PATH: the
+	# Nix pkg-config wrapper replaces PKG_CONFIG_PATH with its own
+	# platform-suffixed variable. Search-path lookup is covered by the
+	# test-overlay-pkgconfig flake check, where the setup hook fills it.
+	local pc="$ROOT/zig-out/lib/pkgconfig/xattr_stream.pc" flags libdir private all word
+	libdir="$(pkg-config --variable=libdir "$pc")" || return 1
 	# Static: -l would pick the .so when both exist, so link the archive from
 	# the reported libdir plus the private libs, as a static consumer would.
-	flags="$(PKG_CONFIG_PATH="$pc_path" pkg-config --cflags xattr_stream)" || return 1
-	all="$(PKG_CONFIG_PATH="$pc_path" pkg-config --libs --static xattr_stream)" || return 1
+	flags="$(pkg-config --cflags "$pc")" || return 1
+	all="$(pkg-config --libs --static "$pc")" || return 1
 	private=""
 	for word in $all; do
 		[[ "$word" == -lxattr_stream || "$word" == -L* ]] || private+=" $word"
@@ -63,7 +67,7 @@ consumer_pkgconfig() {
 	# shellcheck disable=SC2086 # word splitting of pkg-config flags is intended
 	clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_static" tests/consumers/c/consumer.c $flags "$libdir/libxattr_stream.a" $private || return 1
 	"$TMPDIR/xs_consumer_pc_static" || return 1
-	flags="$(PKG_CONFIG_PATH="$pc_path" pkg-config --cflags --libs xattr_stream)" || return 1
+	flags="$(pkg-config --cflags --libs "$pc")" || return 1
 	# shellcheck disable=SC2086
 	clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_shared" tests/consumers/c/consumer.c $flags -Wl,-rpath,"$libdir" || return 1
 	"$TMPDIR/xs_consumer_pc_shared"
