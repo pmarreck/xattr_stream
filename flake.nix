@@ -187,6 +187,7 @@
             zig
             clang
             pkg-config
+            jq
             luajit
             rustc
             bashInteractive

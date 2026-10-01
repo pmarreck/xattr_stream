@@ -175,6 +175,12 @@ const char *xs_name_rejection_message(int rejection);
  */
 int xs_is_display_text(const void *bytes, size_t len);
 
+/*
+ * 1 when bytes are well-formed UTF-8 (control characters allowed), else 0.
+ * NULL with length zero is the empty string and counts as UTF-8.
+ */
+int xs_is_utf8(const void *bytes, size_t len);
+
 /* Tree traversal for recursive listings. */
 enum { XS_WALK_BREADTH_FIRST = 0, XS_WALK_DEPTH_FIRST = 1 };
 enum { XS_KIND_OTHER = 0, XS_KIND_DIRECTORY = 1, XS_KIND_SYMLINK = 2 };

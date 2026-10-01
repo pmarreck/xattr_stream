@@ -138,7 +138,9 @@ static void usage(FILE *out) {
 		"  --raw           use native OS names (e.g. Linux user.x, macOS com.apple.x)\n"
 		"  --limit <n>     max value size in bytes for put/get (default 65536, the\n"
 		"                  smallest OS ceiling; macOS and NTFS allow more)\n"
-		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr\n"
+		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr;\n"
+		"                  dump writes one {\"path\",\"xattrs\"} object per file per line,\n"
+		"                  values always printable-binary\n"
 		"  --quiet         suppress warnings (e.g. values over 4096 bytes)\n"
 		"  -r, --recurse   lst/dump: walk the tree below <path>, breadth-first\n"
 		"  -d, --depth <n> lst/dump: limit the walk to n levels (0 = <path> alone);\n"
@@ -197,6 +199,22 @@ static void json_string(FILE *out, const unsigned char *s, size_t len) {
 	fputc('"', out);
 }
 
+/* Writes "key":"bytes" when the bytes are UTF-8, else "key_pb":"<printable-
+ * binary>", because JSON cannot carry invalid UTF-8 (Linux paths and raw
+ * attribute names can hold any byte but NUL). */
+static void json_field_utf8_or_pb(FILE *out, const char *key, const unsigned char *s, size_t len) {
+	if (xs_is_utf8(s, len)) {
+		fprintf(out, "\"%s\":", key);
+		json_string(out, s, len);
+		return;
+	}
+	pb_ffi_result_t pb = pb_encode((const char *)s, len, PB_ENCODE_PRESERVE_SPACES, NULL, 0);
+	fprintf(out, "\"%s_pb\":", key);
+	if (pb.error_code == 0 && pb.data) json_string(out, (const unsigned char *)pb.data, pb.len);
+	else fputs("null", out);
+	if (pb.data) pb_free(pb.data, pb.len);
+}
+
 static void warn_portability(const cli_opts *o, size_t len) {
 	if (o->quiet || len <= XS_PORTABLE_VALUE_LEN) return;
 	if (o->json) {
@@ -220,12 +238,12 @@ static void report(const cli_opts *o, const char *op, const char *path, const ch
 		fputs(",\"op\":", stderr);
 		json_string(stderr, (const unsigned char *)op, strlen(op));
 		if (path) {
-			fputs(",\"path\":", stderr);
-			json_string(stderr, (const unsigned char *)path, strlen(path));
+			fputc(',', stderr);
+			json_field_utf8_or_pb(stderr, "path", (const unsigned char *)path, strlen(path));
 		}
 		if (name) {
-			fputs(",\"name\":", stderr);
-			json_string(stderr, (const unsigned char *)name, strlen(name));
+			fputc(',', stderr);
+			json_field_utf8_or_pb(stderr, "name", (const unsigned char *)name, strlen(name));
 		}
 		fprintf(stderr, ",\"os_error\":%" PRId32 ",\"message\":", os_err);
 		json_string(stderr, (const unsigned char *)explain(status), strlen(explain(status)));
@@ -457,11 +475,11 @@ static void warn_path(lst_ctx *c, const char *path, size_t path_len, const unsig
 	if (c->o->json) {
 		fputs("{\"warning\":", stderr);
 		json_string(stderr, (const unsigned char *)sname, strlen(sname));
-		fputs(",\"path\":", stderr);
-		json_string(stderr, (const unsigned char *)path, path_len);
+		fputc(',', stderr);
+		json_field_utf8_or_pb(stderr, "path", (const unsigned char *)path, path_len);
 		if (name) {
-			fputs(",\"name\":", stderr);
-			json_string(stderr, name, name_len);
+			fputc(',', stderr);
+			json_field_utf8_or_pb(stderr, "name", name, name_len);
 		}
 		fprintf(stderr, ",\"os_error\":%" PRId32 ",\"message\":", xs_last_os_error());
 		json_string(stderr, (const unsigned char *)explain(status), strlen(explain(status)));
@@ -615,21 +633,16 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 	if (o->json) {
 		if (!c->json_first) fputc(',', stdout);
 		c->json_first = 0;
-		if (!o->recurse && !o->values) {
+		/* Value listings never get here: json_file writes them per file. */
+		if (!o->recurse) {
 			json_string(stdout, name, name_len); /* plain ["a","b"] form */
 		} else {
 			fputc('{', stdout);
 			if (o->recurse) {
-				fputs("\"path\":", stdout);
-				json_string(stdout, (const unsigned char *)path, path_len);
+				json_field_utf8_or_pb(stdout, "path", (const unsigned char *)path, path_len);
 				fputc(',', stdout);
 			}
-			fputs("\"name\":", stdout);
-			json_string(stdout, name, name_len);
-			if (o->values) {
-				fprintf(stdout, ",\"%s\":", vd.type);
-				json_string(stdout, vd.bytes, vd.len);
-			}
+			json_field_utf8_or_pb(stdout, "name", name, name_len);
 			fputc('}', stdout);
 		}
 	} else if (o->fmt == FMT_TSV) {
@@ -681,12 +694,75 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 	}
 }
 
+/* JSON listing with values: one object per file on its own line, the format
+ * `load` reads back. UTF-8 names go under "xattrs", others (only possible
+ * with --raw) under "xattrs_pb"; values are always printable-binary with
+ * literal spaces, so the format itself says how to decode them. Each value
+ * is read once; a file with no readable attributes produces no line. */
+static void json_file(lst_ctx *c, const char *path, size_t path_len, const unsigned char *names, size_t count) {
+	const cli_opts *o = c->o;
+	int opened = 0;
+	for (int pass = 0; pass < 2; pass++) {
+		int section_open = 0;
+		size_t off = 0;
+		for (size_t i = 0; i < count; i++) {
+			const unsigned char *name = names + off;
+			size_t n = strlen((const char *)name);
+			off += n + 1;
+			if (xs_is_utf8(name, n) != (pass == 0)) continue;
+			xs_buffer v = {0};
+			int st = xs_get(path, path_len, (const char *)name, n, &o->xs, &v);
+			if (st != XS_OK) {
+				warn_path(c, path, path_len, name, n, st);
+				continue;
+			}
+			pb_ffi_result_t vpb = pb_encode((const char *)v.data, v.len, PB_ENCODE_PRESERVE_SPACES, NULL, 0);
+			xs_buffer_free(&v);
+			if (vpb.error_code != 0 || (!vpb.data && vpb.len)) {
+				if (vpb.data) pb_free(vpb.data, vpb.len);
+				warn_path(c, path, path_len, name, n, XS_OUT_OF_MEMORY);
+				continue;
+			}
+			if (!opened) {
+				fputc('{', stdout);
+				json_field_utf8_or_pb(stdout, "path", (const unsigned char *)path, path_len);
+				opened = 1;
+			}
+			if (!section_open) {
+				fputs(pass == 0 ? ",\"xattrs\":{" : ",\"xattrs_pb\":{", stdout);
+				section_open = 1;
+			} else {
+				fputc(',', stdout);
+			}
+			if (pass == 0) {
+				json_string(stdout, name, n);
+			} else {
+				pb_ffi_result_t npb = pb_encode((const char *)name, n, PB_ENCODE_PRESERVE_SPACES, NULL, 0);
+				if (npb.error_code == 0 && npb.data) json_string(stdout, (const unsigned char *)npb.data, npb.len);
+				else fputs("\"\"", stdout);
+				if (npb.data) pb_free(npb.data, npb.len);
+			}
+			fputc(':', stdout);
+			json_string(stdout, (const unsigned char *)vpb.data, vpb.len);
+			if (vpb.data) pb_free(vpb.data, vpb.len);
+		}
+		if (section_open) fputc('}', stdout);
+	}
+	if (opened) fputs("}\n", stdout);
+}
+
 static int list_one(lst_ctx *c, const char *path, size_t path_len) {
+
 	xs_buffer names = {0};
 	size_t count = 0;
 	int st = xs_list(path, path_len, &c->o->xs, &names, &count);
 	if (st != XS_OK) return st;
 	const unsigned char *p = names.data;
+	if (c->o->json && c->o->values) {
+		json_file(c, path, path_len, p, count);
+		xs_buffer_free(&names);
+		return XS_OK;
+	}
 	size_t off = 0;
 	for (size_t i = 0; i < count; i++) {
 		size_t n = strlen((const char *)p + off);
@@ -713,8 +789,8 @@ static int walk_cb(void *ud, const char *path, size_t path_len, int kind, uint64
 		const char *why = kind == XS_KIND_SYMLINK ? "dangling_symlink" : "vanished";
 		if (c->o->debug) {
 			if (c->o->json) {
-				fprintf(stderr, "{\"debug\":\"%s\",\"path\":", why);
-				json_string(stderr, (const unsigned char *)path, path_len);
+				fprintf(stderr, "{\"debug\":\"%s\",", why);
+				json_field_utf8_or_pb(stderr, "path", (const unsigned char *)path, path_len);
 				fputs("}\n", stderr);
 			} else {
 				fprintf(stderr, PROG ": debug: %.*s: %s, skipped\n", (int)path_len, path,
@@ -741,7 +817,8 @@ static int cmd_lst(cli_opts *o, const char *path) {
 		k++;
 	}
 	int framed = !o->json && (o->fmt == FMT_TABLE || o->fmt == FMT_MD);
-	if (o->json) fputc('[', stdout);
+	int json_array = o->json && !o->values; /* names-only listings stay a JSON array */
+	if (json_array) fputc('[', stdout);
 	else if (framed) header_row(&c);
 	else if (o->fmt == FMT_CSV) {
 		int first = 1;
@@ -760,7 +837,7 @@ static int cmd_lst(cli_opts *o, const char *path) {
 	} else {
 		st = list_one(&c, path, strlen(path));
 	}
-	if (o->json) fputs("]\n", stdout);
+	if (json_array) fputs("]\n", stdout);
 	else if (framed && o->fmt == FMT_TABLE) table_border(&c);
 	if (st != XS_OK) {
 		report(o, "lst", path, NULL, st);

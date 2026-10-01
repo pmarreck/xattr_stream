@@ -342,18 +342,33 @@ current="recursive json"
 out=""; err=""; rc=0; capture "$BIN" --json lst -d 1 "$tree"
 assert_rc 0
 assert_out "[{\"path\":\"$tree\",\"name\":\"root.attr\"},{\"path\":\"$tree/a\",\"name\":\"a.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.attr\"},{\"path\":\"$tree/f1\",\"name\":\"f1.other\"},{\"path\":\"$tree/l\",\"name\":\"a.attr\"}]"
+# JSON with values: one object per file (newline-delimited), values always
+# printable-binary with literal spaces, so --utf8 and --hex do not apply.
+f1json="{\"path\":\"$tree/f1\",\"xattrs\":{\"f1.attr\":\"one\",\"f1.other\":\"two\"}}"
 out=""; err=""; rc=0; capture "$BIN" --json lst --values "$tree/f1"
-assert_out '[{"name":"f1.attr","pb":"one"},{"name":"f1.other","pb":"two"}]'
-out=""; err=""; rc=0; capture "$BIN" --json --utf8 dump "$tree/f1"
-assert_out '[{"name":"f1.attr","utf8":"one"},{"name":"f1.other","utf8":"two"}]'
+assert_out "$f1json"
+for flag in --utf8 --hex; do
+	out=""; err=""; rc=0; capture "$BIN" --json "$flag" dump "$tree/f1"
+	assert_out "$f1json"
+done
 printf '\x00\x01\xfe\xff' | "$BIN" put "$tree/a/x/deep" small.bin
+printf 'sunny day\x00' | "$BIN" put "$tree/a/x/deep" spaced
 out=""; err=""; rc=0; capture "$BIN" --json dump "$tree/a/x/deep"
-[[ "$out" == *'{"name":"small.bin","pb":"·¯żŻ"}'* ]] && pass || fail "json pb value: '$out'"
-out=""; err=""; rc=0; capture "$BIN" --json --hex dump "$tree/a/x/deep"
-[[ "$out" == *'{"name":"small.bin","hex":"0001feff"}'* ]] && pass || fail "json hex value: '$out'"
-out=""; err=""; rc=0; capture "$BIN" --json --utf8 dump "$tree/a/x/deep"
-[[ "$out" == *'{"name":"small.bin","pb":"·¯żŻ"}'* ]] && pass || fail "json utf8 mode keeps pb for binary: '$out'"
+[[ "$out" == *'"small.bin":"·¯żŻ"'* ]] && pass || fail "json pb value: '$out'"
+[[ "$out" == *'"spaced":"sunny day·"'* ]] && pass || fail "json keeps literal spaces: '$out'"
 "$BIN" del "$tree/a/x/deep" small.bin
+"$BIN" del "$tree/a/x/deep" spaced
+# Recursive: one line per file that has attributes, in walk order; files
+# without attributes produce no line.
+out=""; err=""; rc=0; capture "$BIN" --json dump -d 1 "$tree"
+assert_rc 0
+assert_out "{\"path\":\"$tree\",\"xattrs\":{\"root.attr\":\"r\"}}
+{\"path\":\"$tree/a\",\"xattrs\":{\"a.attr\":\"A\"}}
+$f1json
+{\"path\":\"$tree/l\",\"xattrs\":{\"a.attr\":\"A\"}}"
+out=""; err=""; rc=0; capture "$BIN" --json dump "$(new_file jempty)"
+assert_rc 0
+assert_out ""
 
 current="dangling symlinks are skipped silently when recursing"
 ln -s does-not-exist "$tree/dangling"
@@ -415,7 +430,7 @@ assert_out "deep.attr	·¯«»ϟ¿¡ª…(256 bytes)"
 out=""; err=""; rc=0; capture "$BIN" dump -w 4 -w 0 "$wf"
 [[ "$out" == *"long	abcdefghij"* ]] && pass || fail "-w 0 should lift the limit: '$out'"
 out=""; err=""; rc=0; capture "$BIN" --json dump -w 4 "$wf"
-[[ "$out" == *'{"name":"long","pb":"abcdefghij"}'* ]] && pass || fail "JSON must not be truncated: '$out'"
+[[ "$out" == *'"long":"abcdefghij"'* ]] && pass || fail "JSON must not be truncated: '$out'"
 out=""; err=""; rc=0; capture "$BIN" dump -w nope "$wf"
 assert_rc 2
 out=""; err=""; rc=0; capture "$BIN" --color dump -w 4 "$wf"
@@ -532,7 +547,37 @@ out=""; err=""; rc=0; capture "$BIN" --cols x dump "$fmt/plain"
 assert_rc 2
 # Table flags never leak into JSON.
 out="$(run_in_tmp --json --table dump fmt/plain)"; rc=$?
-assert_out '[{"name":"key","pb":"one"}]'
+assert_out '{"path":"fmt/plain","xattrs":{"key":"one"}}'
+# Paths that are not UTF-8 cannot appear in JSON verbatim: they go under
+# path_pb, printable-binary encoded. Raw names that are not UTF-8 go under
+# xattrs_pb. Expected encodings come from the independent LuaJIT encoder.
+mkdir -p "$tmpdir/jd"
+nonutf="$tmpdir/jd/caf"$'\xe9'
+: >"$nonutf"
+printf 'v' | "$BIN" put "$nonutf" k
+out="$(run_in_tmp --json dump jd/caf$'\xe9')"; rc=$?
+assert_rc 0
+assert_out '{"path_pb":"jd⁄cafȚ","xattrs":{"k":"v"}}'
+if [[ "$(os_name)" == "Linux" ]]; then
+	printf 'raw' | "$BIN" --raw put "$nonutf" user.k$'\xff'
+	out="$(run_in_tmp --raw --json dump jd/caf$'\xe9')"; rc=$?
+	assert_rc 0
+	assert_out '{"path_pb":"jd⁄cafȚ","xattrs":{"user.k":"v"},"xattrs_pb":{"user.kŻ":"raw"}}'
+fi
+# Names-only recursive JSON follows the same rule.
+out="$(run_in_tmp --json lst -r jd)"; rc=$?
+[[ "$out" == *'{"path_pb":"jd⁄cafȚ","name":"k"}'* && "$out" != *$'\xe9'* ]] && pass || fail "names-only JSON with non-UTF-8 path: '$out'"
+# JSON errors on stderr follow the same rule for a non-UTF-8 path.
+
+err="$(cd "$tmpdir" && "$BIN" --json get jd/caf$'\xe9' nope 2>&1 >/dev/null)"
+[[ "$err" == *'"path_pb":"jd⁄cafȚ"'* && "$err" != *$'\xe9'* ]] && pass || fail "JSON error with non-UTF-8 path: '$err'"
+# Every line of a recursive dump is a JSON document.
+
+if command -v jq >/dev/null 2>&1; then
+	out="$(run_in_tmp --json dump -r .)"; rc=$?
+	assert_rc 0
+	printf '%s\n' "$out" | jq -e . >/dev/null 2>&1 && pass || fail "recursive JSON dump does not parse: '$out'"
+fi
 
 current="syscall budget: one listxattr per node, one getxattr per small value"
 if [[ "$(os_name)" == "Linux" ]] && command -v strace >/dev/null 2>&1; then

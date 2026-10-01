@@ -191,3 +191,17 @@ test "xs_version and xs_target are stable static strings" {
 	try expect(std.mem.indexOf(u8, target, "-") != null);
 	try expect(ffi.xs_limits("", 0) == -1);
 }
+
+test "xs_is_utf8 classifies byte strings as UTF-8 or not, over accept and reject sets" {
+	// Control characters and newlines are valid UTF-8; only encoding matters
+	// here (JSON can escape controls but cannot carry invalid UTF-8).
+	const accept = [_][]const u8{ "", "plain", "a\nb\x00c", "caf\xc3\xa9", "\xe2\x88\xa3", "\xf0\x9f\x98\x80", "dir/sub dir/f" };
+	const reject = [_][]const u8{ "\xff", "caf\xe9", "\xc3", "\xc3\x28", "\xe2\x88", "\xed\xa0\x80", "\xc0\xaf", "\xf4\x90\x80\x80" };
+	var accepted: usize = 0;
+	for (accept) |s| accepted += @intCast(ffi.xs_is_utf8(s.ptr, s.len));
+	try expectEqual(accept.len, accepted);
+	var rejected: usize = 0;
+	for (reject) |s| rejected += @intCast(1 - ffi.xs_is_utf8(s.ptr, s.len));
+	try expectEqual(reject.len, rejected);
+	try expectEqual(@as(c_int, 1), ffi.xs_is_utf8(null, 0));
+}

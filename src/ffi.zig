@@ -234,6 +234,14 @@ pub export fn xs_is_display_text(bytes: ?[*]const u8, len: usize) callconv(.c) c
 	return if (xs.isDisplayText(b)) 1 else 0;
 }
 
+/// 1 when the bytes are well-formed UTF-8 (control characters allowed): the
+/// test for whether a path can go into JSON verbatim. Rejects overlongs,
+/// surrogates and code points above U+10FFFF, as std.unicode does.
+pub export fn xs_is_utf8(bytes: ?[*]const u8, len: usize) callconv(.c) c_int {
+	const b = slice(bytes, len) orelse return 0;
+	return if (std.unicode.utf8ValidateSlice(b)) 1 else 0;
+}
+
 pub const XS_WALK_BREADTH_FIRST: c_int = 0;
 pub const XS_WALK_DEPTH_FIRST: c_int = 1;
 pub const XS_KIND_OTHER: c_int = 0;

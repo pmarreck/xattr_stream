@@ -91,9 +91,24 @@ read, dangling symlinks and files deleted mid-walk (browser caches churn
 like this), have nothing to list and are skipped silently; `--debug` (or a
 `DEBUG` environment variable set to anything but `0`) reports each skip on
 stderr without changing the exit code. The root path is exempt: naming a
-missing path is an error. `--json` produces an array of `{"path","name","pb"|"utf8"|"hex"}`
-objects (no `path` when not recursing; plain name strings when neither
-recursing nor showing values).
+missing path is an error.
+
+With `--json`, `dump` (or `lst --values`) writes one JSON object per file,
+one per line, in walk order. Files without attributes produce no line:
+
+```
+{"path":"docs/notes.md","xattrs":{"owner":"Peter","state":"draft, v2"}}
+{"path_pb":"jd⁄cafȚ","xattrs":{"k":"v"}}
+```
+
+Values are always printable-binary with literal spaces, whatever `--utf8`,
+`--hex` or `-w` say, so the format alone says how to decode them. Names are
+written as they are. A path that is not valid UTF-8 (possible on Linux)
+cannot appear in JSON, so it is written printable-binary encoded under
+`path_pb` instead of `path`; raw names that are not UTF-8 go under
+`xattrs_pb` the same way, and so do paths and names in JSON warnings and
+errors. Names-only listings stay a JSON array: plain name strings for one
+file, `{"path","name"}` objects when recursing.
 
 ```sh
 $ xattr-stream dump -r photos
