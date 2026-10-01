@@ -314,7 +314,7 @@ out=""; err=""; rc=0; capture "$BIN" dump "$tree/f1"
 assert_out "f1.attr	one
 f1.multi	multi¶line
 f1.other	two
-f1.spaced	sunny␣day
+f1.spaced	sunny day
 f1.uni	ĹǩnĹȟ"
 # --utf8: values that are printable single-line UTF-8 pass through verbatim
 # and a type column says which representation each row uses.

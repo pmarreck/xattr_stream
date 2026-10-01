@@ -426,7 +426,7 @@ static value_disp render_value(const cli_opts *o, const unsigned char *raw, size
 		return d;
 	}
 	if (!o->hex) {
-		d.pb = pb_encode((const char *)raw, raw_len, PB_ENCODE_NONE, NULL, 0);
+		d.pb = pb_encode((const char *)raw, raw_len, PB_ENCODE_PRESERVE_SPACES, NULL, 0);
 		if (d.pb.error_code == 0 && (d.pb.data || d.pb.len == 0)) {
 			d.type = "pb";
 			d.bytes = (const unsigned char *)d.pb.data;
@@ -649,7 +649,7 @@ static void emit_entry(lst_ctx *c, const char *path, size_t path_len, const unsi
 	} else {
 		/* Names go through printable-binary in the delimited formats so no
 		 * delimiter (| , tabs, control chars) can appear in them. */
-		pb_ffi_result_t npb = pb_encode((const char *)name, name_len, PB_ENCODE_NONE, NULL, 0);
+		pb_ffi_result_t npb = pb_encode((const char *)name, name_len, PB_ENCODE_PRESERVE_SPACES, NULL, 0);
 		const unsigned char *nb = npb.error_code == 0 && npb.data ? (const unsigned char *)npb.data : name;
 		size_t nl = npb.error_code == 0 && npb.data ? npb.len : name_len;
 		if (o->fmt == FMT_CSV) {

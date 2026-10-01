@@ -53,10 +53,11 @@ Listings are rows of `[path] name [type] value`. The path column appears
 when recursing, the value with `--values` or `dump`, the type only with
 `--utf8`. Every value is rendered with
 [printable-binary](https://github.com/pmarreck/printable-binary) by
-default: one line of UTF-8 in which every byte, including NUL, control
-characters and delimiters, has a visible lookalike glyph (`sunny␣day`,
-`multi¶line`, `a٫b∣c`), and which converts back to the exact bytes with
-`printable-binary -d`. It is linked in as a Zig dependency and consumed the
+default: one line of UTF-8 in which every byte except the space, including
+NUL, control characters and delimiters, has a visible lookalike glyph
+(`multi¶line`, `a٫b∣c`). Spaces stay literal, so `sunny day` reads as
+written. It converts back to the exact bytes with `printable-binary -d`.
+It is linked in as a Zig dependency and consumed the
 same way this library is, through its own C header. Multi-byte text comes
 out as per-byte glyphs in that mode; `--utf8` shows values that are valid
 single-line UTF-8 verbatim instead and adds the type column, which says
@@ -97,7 +98,7 @@ recursing nor showing values).
 ```sh
 $ xattr-stream dump -r photos
 photos	owner	Peter
-photos/2026/beach.jpg	caption	sunny␣day
+photos/2026/beach.jpg	caption	sunny day
 photos/2026/beach.jpg	thumb.bin	·¯żŻ
 $ xattr-stream --utf8 dump photos/2026/beach.jpg
 caption	utf8	sunny day
@@ -107,7 +108,7 @@ $ xattr-stream --table --cols 20,10,12 dump -r photos
 | path                 | name       | value        |
 +----------------------+------------+--------------+
 | photos               | owner      | Peter        |
-| …otos/2026/beach.jpg | caption    | sunny␣day    |
+| …otos/2026/beach.jpg | caption    | sunny day    |
 | …otos/2026/beach.jpg | thumb.bin  | ·¯żŻ         |
 +----------------------+------------+--------------+
 ```
