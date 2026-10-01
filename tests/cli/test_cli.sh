@@ -65,7 +65,7 @@ fi
 current="help"
 out=""; err=""; rc=0; capture "$BIN" --help
 assert_rc 0
-for word in put get len del lst dump dmp limits lim --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --utf8 --tsv --csv --table --md --cols --about; do
+for word in put get len del lst dump dmp limits lim load --root --allow-unsafe-paths --nofollow --raw --limit --json --quiet --recurse --depth --depth-first --values --debug --color --no-color --hex --max-width --utf8 --tsv --csv --table --md --cols --about; do
 	[[ "$out" == *"$word"* ]] && pass || fail "help missing '$word'"
 done
 out=""; err=""; rc=0; capture "$BIN" -h
@@ -692,5 +692,111 @@ case "$(os_name)" in
 		;;
 esac
 
+current="load restores a JSON dump byte-exact"
+# Metamorphic round trip: dump a tree with relative paths, load it into a
+# fresh copy of the tree, dump the copy; the two dumps must be identical,
+# and a 256-byte value must come back byte for byte.
+mktree() {
+	mkdir -p "$1/a/x" "$1/sp ace"
+	: >"$1/f1"; : >"$1/a/x/deep"; : >"$1/sp ace/g h"
+}
+mktree "$tmpdir/lsrc"
+printf 'root' | "$BIN" put "$tmpdir/lsrc" r
+printf 'sunny day' | "$BIN" put "$tmpdir/lsrc/f1" k1
+: | "$BIN" put "$tmpdir/lsrc/f1" empty
+"$BIN" put "$tmpdir/lsrc/a/x/deep" all <"$allbytes"
+printf 'v' | "$BIN" put "$tmpdir/lsrc/sp ace/g h" "n m"
+(cd "$tmpdir/lsrc" && "$BIN" --json dump -r .) >"$tmpdir/the dump.ndjson"
+mktree "$tmpdir/dst dir"
+before="$(cd "$tmpdir/dst dir" && "$BIN" --json dump -r .)"
+[[ -z "$before" ]] && pass || fail "fresh tree should have no attributes: '$before'"
+out=""; err=""; rc=0; capture "$BIN" load --root "$tmpdir/dst dir" "$tmpdir/the dump.ndjson"
+assert_rc 0
+assert_err_empty
+assert_out ""
+after="$(cd "$tmpdir/dst dir" && "$BIN" --json dump -r .)"
+[[ "$after" == "$(cat "$tmpdir/the dump.ndjson")" && -n "$after" ]] && pass || fail "dump after load differs: '$after'"
+"$BIN" get "$tmpdir/dst dir/a/x/deep" all >"$tmpdir/back.bin"
+cmp -s "$allbytes" "$tmpdir/back.bin" && pass || fail "256-byte value did not survive dump and load"
+out=""; err=""; rc=0; capture "$BIN" len "$tmpdir/dst dir/f1" empty
+assert_out "0"
+# stdin as -, @stdin, or no file at all.
+for src in - @stdin none; do
+	mktree "$tmpdir/dst-$src"
+	if [[ "$src" == none ]]; then
+		out=""; err=""; rc=0; capture "$BIN" load --root "$tmpdir/dst-$src" <"$tmpdir/the dump.ndjson"
+	else
+		out=""; err=""; rc=0; capture "$BIN" load --root "$tmpdir/dst-$src" "$src" <"$tmpdir/the dump.ndjson"
+	fi
+	assert_rc 0
+	out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/dst-$src/f1" k1
+	assert_out "sunny day"
+done
+# Without --root, relative paths resolve against the current directory.
+mktree "$tmpdir/dst-cwd"
+(cd "$tmpdir/dst-cwd" && "$BIN" load "$tmpdir/the dump.ndjson") && pass || fail "load relative to cwd failed"
+out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/dst-cwd/sp ace/g h" "n m"
+assert_out "v"
+
+current="load refuses absolute paths and .. unless allowed"
+mkdir -p "$tmpdir/lr"
+: >"$tmpdir/lr/inside"; : >"$tmpdir/outside"; : >"$tmpdir/abs"
+printf '%s\n' '{"path":"/xs-never-written","xattrs":{"k":"v"}}' '{"path":"../outside","xattrs":{"k":"v"}}' '{"path":"inside","xattrs":{"k":"ok"}}' >"$tmpdir/unsafe.ndjson"
+out=""; err=""; rc=0; capture "$BIN" load --root "$tmpdir/lr" "$tmpdir/unsafe.ndjson"
+assert_rc 1
+assert_err_has "line 1"
+assert_err_has "line 2"
+assert_err_has "--allow-unsafe-paths"
+out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/lr/inside" k
+assert_out "ok"
+out=""; err=""; rc=0; capture "$BIN" len "$tmpdir/outside" k
+assert_out "-1"
+printf '%s\n' '{"path":"../outside","xattrs":{"k":"v"}}' "{\"path\":\"$tmpdir/abs\",\"xattrs\":{\"k\":\"a\"}}" >"$tmpdir/unsafe2.ndjson"
+out=""; err=""; rc=0; capture "$BIN" load --allow-unsafe-paths --root "$tmpdir/lr" "$tmpdir/unsafe2.ndjson"
+assert_rc 0
+out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/outside" k
+assert_out "v"
+# An absolute path is used as written; --root applies only to relative ones.
+out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/abs" k
+assert_out "a"
+
+current="load reports bad lines by number and keeps going"
+printf '%s\n' 'not json' '' '{"path":"nope","xattrs":{"k":"v"}}' '{"path":"inside","xattrs":{"k":"again"}}' >"$tmpdir/bad.ndjson"
+out=""; err=""; rc=0; capture "$BIN" load --root "$tmpdir/lr" "$tmpdir/bad.ndjson"
+assert_rc 1
+assert_err_has "line 1"
+assert_err_has "line 3"
+assert_err_has "XS_NOT_FOUND"
+[[ "$err" != *"line 2"* ]] && pass || fail "a blank line is not an error: '$err'"
+out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/lr/inside" k
+assert_out "again"
+out=""; err=""; rc=0; capture "$BIN" --json load --root "$tmpdir/lr" "$tmpdir/bad.ndjson"
+assert_rc 1
+if command -v jq >/dev/null 2>&1; then
+	printf '%s\n' "$err" | jq -e 'select(.op == "load") | .line' >/dev/null 2>&1 && pass || fail "JSON load errors: '$err'"
+fi
+[[ "$err" == *'"line":1'* && "$err" == *'"line":3'* ]] && pass || fail "JSON load errors carry line numbers: '$err'"
+out=""; err=""; rc=0; capture "$BIN" load --root "$tmpdir/lr" "$tmpdir/no such dump"
+assert_rc 7
+
+if [[ "$(os_name)" == "Linux" ]]; then
+	current="load decodes path_pb and raw xattrs_pb"
+	out="$(cd "$tmpdir" && printf '%s\n' '{"path_pb":"jd⁄cafȚ","xattrs":{"k2":"z"}}' | "$BIN" load 2>&1)"; rc=$?
+	assert_rc 0
+	out=""; err=""; rc=0; capture "$BIN" get "$nonutf" k2
+	assert_out "z"
+	: >"$tmpdir/jd/plain"
+	line='{"path":"jd/plain","xattrs_pb":{"user.kŻ":"raw2"}}'
+	out="$(cd "$tmpdir" && printf '%s\n' "$line" | "$BIN" --raw load 2>&1)"; rc=$?
+	assert_rc 0
+	out=""; err=""; rc=0; capture "$BIN" --raw get "$tmpdir/jd/plain" user.k$'\xff'
+	assert_out "raw2"
+	# Without --raw the same name is not a valid logical name.
+	err="$(cd "$tmpdir" && printf '%s\n' "$line" | "$BIN" load 2>&1 >/dev/null)"; rc=$?
+	assert_rc 1
+	assert_err_has "XS_INVALID_NAME"
+fi
+
 echo "CLI tests: $passes passed, $failures failed"
+
 exit "$failures"

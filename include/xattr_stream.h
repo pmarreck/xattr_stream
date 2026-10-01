@@ -204,7 +204,35 @@ xs_status xs_walk(const char *path, size_t path_len, int order, int64_t max_dept
                   xs_walk_fn cb, void *userdata);
 
 /* "XS_MISSING" etc.; "XS_UNKNOWN" for values outside the enum. Static. */
+/*
+ * The `dump --json` line format: one object per file,
+ *   {"path": str | "path_pb": str, "xattrs"?: {name: value},
+ *    "xattrs_pb"?: {name: value}}
+ * Values (and names under xattrs_pb, and path_pb) are printable-binary; the
+ * parser hands strings over JSON-unescaped but still encoded, so callers
+ * decode them. The callback sees the path first (key_len 0), then xattrs,
+ * then xattrs_pb, in document order; return non-zero to stop. Pointers are
+ * valid only during the callback. Malformed lines (not an object, missing or
+ * doubled path, non-string values, unknown or duplicate keys) return
+ * XS_INVALID_ARGUMENT before any callback runs.
+ */
+enum { XS_DUMP_PATH = 0, XS_DUMP_PATH_PB = 1, XS_DUMP_XATTR = 2, XS_DUMP_XATTR_PB = 3 };
+typedef int (*xs_dump_fn)(void *userdata, int field, const char *key, size_t key_len,
+	const char *value, size_t value_len);
+xs_status xs_parse_dump_line(const char *line, size_t len, xs_dump_fn cb, void *userdata);
+
+/*
+ * Restore guard: 1 when path is relative and has no `..` component, else 0.
+ * POSIX and Windows rules both apply on every OS: a leading / or \, a drive
+ * prefix such as C:, NUL bytes and the empty path are all rejected.
+ */
+int xs_is_contained_relative_path(const char *path, size_t len);
+
+/* 1 when path starts with / or \, or a drive prefix such as C:, on any OS. */
+int xs_is_absolute_path(const char *path, size_t len);
+
 const char *xs_status_name(int status);
+
 
 /* errno or Win32 error code behind the most recent failure on this thread. */
 int32_t xs_last_os_error(void);

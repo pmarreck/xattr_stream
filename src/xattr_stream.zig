@@ -12,6 +12,7 @@ pub const names = @import("names.zig");
 
 pub const version = "0.2.0";
 pub const walk = @import("walk.zig");
+pub const dump = @import("dump.zig");
 
 /// Display heuristic for listings: a value is shown as text when it is valid
 /// UTF-8 with no control characters other than TAB (so it fits on one line

@@ -22,6 +22,7 @@ xattr-stream [options] del <path> <name>       delete (no error if missing)
 xattr-stream [options] lst|list <path>         names, one per line, sorted
 xattr-stream [options] dmp|dump <path>         names and values (lst --values)
 xattr-stream [options] lim|limits [<path>]     max value bytes on that filesystem, or -1
+xattr-stream [options] load [<file>|-|@stdin]  restore a --json dump (stdin by default)
 xattr-stream --help | -h | --version | --about
 
   --nofollow      operate on a symlink itself, not its target
@@ -29,6 +30,8 @@ xattr-stream --help | -h | --version | --about
   --limit <n>     max value size in bytes for put/get (default 65536)
   --json          JSON on stdout for len/lst/limits, JSON errors on stderr
   --quiet         suppress warnings
+  --root <dir>    load: resolve relative dump paths against <dir>
+  --allow-unsafe-paths  load: accept absolute paths and .. components
   -r, --recurse   lst/dump: walk the tree below <path>, breadth-first
   -d, --depth <n> limit the walk to n levels (0 = <path> alone); implies -r
   --depth-first   walk depth-first (pre-order) instead
@@ -109,6 +112,24 @@ cannot appear in JSON, so it is written printable-binary encoded under
 `xattrs_pb` the same way, and so do paths and names in JSON warnings and
 errors. Names-only listings stay a JSON array: plain name strings for one
 file, `{"path","name"}` objects when recursing.
+
+`load` reads that format back and writes each value's original bytes:
+
+```sh
+(cd photos && xattr-stream --json dump -r .) > photos.xattrs.ndjson
+xattr-stream load --root /restore/photos photos.xattrs.ndjson
+```
+
+It sets the listed attributes and leaves any others on the file alone. It
+never creates files, so a path that does not exist is reported. Relative
+paths resolve against `--root`, or the current directory without it.
+Absolute paths and paths with a `..` component are refused unless
+`--allow-unsafe-paths` is given, so a doctored dump cannot write outside the
+target tree. Both POSIX and Windows forms (`C:`, `\\server`) count, on every
+OS. With the flag, absolute paths are used as written. Names under
+`xattrs_pb` are usually raw native names and need `--raw`. A malformed line,
+refused path or failed write is reported with its line number, the rest of
+the dump still loads, and the exit code is 1.
 
 ```sh
 $ xattr-stream dump -r photos

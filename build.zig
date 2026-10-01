@@ -146,7 +146,7 @@ pub fn build(b: *std.Build) void {
 
 	// Unit + integration tests. Each root pulls in its own test declarations.
 	const test_step = b.step("test", "Run Zig unit and integration tests");
-	const test_roots = [_][]const u8{ "src/xattr_stream.zig", "src/ffi.zig", "src/names.zig" };
+	const test_roots = [_][]const u8{ "src/xattr_stream.zig", "src/ffi.zig", "src/names.zig", "src/dump.zig" };
 	for (test_roots) |root| {
 		const t = b.addTest(.{
 			.root_module = b.createModule(.{

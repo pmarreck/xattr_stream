@@ -69,6 +69,8 @@ typedef struct {
 	size_t max_width; /* -w/--max-width: displayed value chars, 0 = unlimited */
 	int color; /* -1 auto (tty and no NO_COLOR), 0 off, 1 forced */
 	int use_color; /* resolved for this run */
+	const char *root;       /* load --root: base for relative dump paths */
+	int allow_unsafe_paths; /* load: permit absolute paths and .. */
 } cli_opts;
 
 /* Colors go only to an interactive terminal, never into JSON or a pipe. */
@@ -131,6 +133,8 @@ static void usage(FILE *out) {
 		"  " PROG " [options] lst|list <path>         names, one per line\n"
 		"  " PROG " [options] dmp|dump <path>         names and values (alias: lst --values)\n"
 		"  " PROG " [options] lim|limits [<path>]     max value bytes on that filesystem, or -1\n"
+		"  " PROG " [options] load [<file>|-|@stdin]  restore a --json dump (stdin by default)\n"
+
 		"  " PROG " --help | -h | --version | --about\n"
 		"\n"
 		"Options (any order, before or after the command; -- ends options):\n"
@@ -140,8 +144,11 @@ static void usage(FILE *out) {
 		"                  smallest OS ceiling; macOS and NTFS allow more)\n"
 		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr;\n"
 		"                  dump writes one {\"path\",\"xattrs\"} object per file per line,\n"
-		"                  values always printable-binary\n"
+		"                  values always printable-binary (the format load reads)\n"
 		"  --quiet         suppress warnings (e.g. values over 4096 bytes)\n"
+		"  --root <dir>    load: resolve relative dump paths against <dir>\n"
+		"  --allow-unsafe-paths  load: accept absolute paths and .. components\n"
+
 		"  -r, --recurse   lst/dump: walk the tree below <path>, breadth-first\n"
 		"  -d, --depth <n> lst/dump: limit the walk to n levels (0 = <path> alone);\n"
 		"                  implies --recurse; also -d=<n> / --depth=<n>\n"
@@ -854,7 +861,206 @@ static int cmd_limits(const cli_opts *o, const char *path) {
 	return EXIT_OK;
 }
 
+/* ---- load: restore a `dump --json` stream ---- */
+
+typedef struct {
+	const cli_opts *o;
+	uint64_t line;
+	char *path;     /* resolved target of the current line, NUL-terminated */
+	size_t path_len;
+	int skip;       /* the line's path was refused or unusable */
+	int failures;
+} load_ctx;
+
+/* One load problem, with its line number. `message` overrides the status's
+ * generic explanation. Errors are never silenced by --quiet. */
+static void load_report(load_ctx *c, const char *path, size_t path_len, const char *name, size_t name_len,
+	int status, const char *message) {
+	const char *sname = xs_status_name(status);
+	const char *msg = message ? message : explain(status);
+	c->failures++;
+	if (c->o->json) {
+		fputs("{\"status\":", stderr);
+		json_string(stderr, (const unsigned char *)sname, strlen(sname));
+		fprintf(stderr, ",\"op\":\"load\",\"line\":%" PRIu64, c->line);
+		if (path) {
+			fputc(',', stderr);
+			json_field_utf8_or_pb(stderr, "path", (const unsigned char *)path, path_len);
+		}
+		if (name) {
+			fputc(',', stderr);
+			json_field_utf8_or_pb(stderr, "name", (const unsigned char *)name, name_len);
+		}
+		fputs(",\"message\":", stderr);
+		json_string(stderr, (const unsigned char *)msg, strlen(msg));
+		fputs("}\n", stderr);
+	} else {
+		fprintf(stderr, PROG ": load: line %" PRIu64 ": ", c->line);
+		if (path) { fwrite(path, 1, path_len, stderr); fputs(": ", stderr); }
+		if (name) { fwrite(name, 1, name_len, stderr); fputs(": ", stderr); }
+		fprintf(stderr, "%s: %s\n", sname, msg);
+	}
+}
+
+/* printable-binary text from a dump back to the original bytes. Literal
+ * spaces decode as spaces; characters outside the alphabet pass through. */
+static int pb_to_bytes(const char *s, size_t len, pb_ffi_result_t *out) {
+	memset(out, 0, sizeof *out);
+	if (len == 0) return 0;
+	*out = pb_decode(s, len, PB_DECODE_NONE);
+	return out->error_code == 0 && out->data ? 0 : -1;
+}
+
+/* Joins --root and a relative dump path; absolute paths (allowed only with
+ * --allow-unsafe-paths) are used as written. */
+static int load_set_path(load_ctx *c, const char *p, size_t pl) {
+	const char *root = c->o->root;
+	int join = root && !xs_is_absolute_path(p, pl);
+	size_t rl = join ? strlen(root) : 0;
+	size_t total = (join ? rl + 1 : 0) + pl;
+	char *buf = malloc(total + 1);
+	if (!buf) return -1;
+	if (join) {
+		memcpy(buf, root, rl);
+		buf[rl] = '/';
+	}
+	memcpy(buf + (join ? rl + 1 : 0), p, pl);
+	buf[total] = '\0';
+	free(c->path);
+	c->path = buf;
+	c->path_len = total;
+	return 0;
+}
+
+/* xs_parse_dump_line visitor: the path arrives first and is checked against
+ * the restore guard, then each attribute is decoded and written. Problems are
+ * reported and counted; the line's other attributes still get written. */
+static int load_field(void *ud, int field, const char *key, size_t key_len, const char *value, size_t value_len) {
+	load_ctx *c = (load_ctx *)ud;
+	if (field == XS_DUMP_PATH || field == XS_DUMP_PATH_PB) {
+		pb_ffi_result_t dec;
+		const char *p = value;
+		size_t pl = value_len;
+		c->skip = 1;
+		if (field == XS_DUMP_PATH_PB) {
+			if (pb_to_bytes(value, value_len, &dec) != 0) {
+				load_report(c, value, value_len, NULL, 0, XS_INVALID_PATH, "path_pb is not printable-binary");
+				return 0;
+			}
+			p = dec.data;
+			pl = dec.len;
+		} else {
+			memset(&dec, 0, sizeof dec);
+		}
+		if (!c->o->allow_unsafe_paths && !xs_is_contained_relative_path(p, pl)) {
+			load_report(c, p, pl, NULL, 0, XS_INVALID_PATH,
+				"absolute path or .. component refused (--allow-unsafe-paths permits it)");
+		} else if (load_set_path(c, p, pl) != 0) {
+			load_report(c, p, pl, NULL, 0, XS_OUT_OF_MEMORY, NULL);
+		} else {
+			c->skip = 0;
+		}
+		if (dec.data) pb_free(dec.data, dec.len);
+		return 0;
+	}
+	if (c->skip) return 0;
+	pb_ffi_result_t nm, val;
+	const char *n = key;
+	size_t nl = key_len;
+	memset(&nm, 0, sizeof nm);
+	if (field == XS_DUMP_XATTR_PB) {
+		if (pb_to_bytes(key, key_len, &nm) != 0) {
+			load_report(c, c->path, c->path_len, key, key_len, XS_INVALID_NAME, "name in xattrs_pb is not printable-binary");
+			return 0;
+		}
+		n = nm.data;
+		nl = nm.len;
+	}
+	if (pb_to_bytes(value, value_len, &val) != 0) {
+		load_report(c, c->path, c->path_len, n, nl, XS_INVALID_ARGUMENT, "value is not printable-binary");
+	} else {
+		warn_portability(c->o, val.len);
+		int st = xs_set(c->path, c->path_len, n, nl, val.data, val.len, &c->o->xs);
+		if (st != XS_OK) load_report(c, c->path, c->path_len, n, nl, st, NULL);
+	}
+	if (val.data) pb_free(val.data, val.len);
+	if (nm.data) pb_free(nm.data, nm.len);
+	return 0;
+}
+
+/* One line into *buf (grown as needed), without its LF or a trailing CR.
+ * 1 for a line, 0 at end of input, -1 on a read error or out of memory. */
+static int read_line(FILE *in, char **buf, size_t *cap, size_t *len) {
+	size_t n = 0;
+	int ch, any = 0;
+	while ((ch = getc(in)) != EOF) {
+		any = 1;
+		if (ch == '\n') break;
+		if (n + 1 >= *cap) {
+			size_t nc = *cap ? *cap * 2 : 4096;
+			char *nb = realloc(*buf, nc);
+			if (!nb) return -1;
+			*buf = nb;
+			*cap = nc;
+		}
+		(*buf)[n++] = (char)ch;
+	}
+	if (ferror(in)) return -1;
+	if (!any) return 0;
+	if (n > 0 && (*buf)[n - 1] == '\r') n--;
+	*len = n;
+	return 1;
+}
+
+static int is_blank(const char *s, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		if (s[i] != ' ' && s[i] != '\t') return 0;
+	}
+	return 1;
+}
+
+/* Restores attributes from a `dump --json` stream, line by line. Bad lines
+ * and refused paths are reported with their line number and skipped; the
+ * exit code is 1 if anything was skipped. */
+static int cmd_load(const cli_opts *o, const char *file) {
+	FILE *in = stdin;
+	if (file && strcmp(file, "-") != 0 && strcmp(file, "@stdin") != 0) {
+		in = fopen(file, "rb");
+		if (!in) {
+			int st = (errno == ENOENT || errno == ENOTDIR) ? XS_NOT_FOUND : errno == EACCES ? XS_PERMISSION : XS_IO;
+			report(o, "load", file, NULL, st);
+			return exit_for(st);
+		}
+	} else {
+		SET_BINARY(stdin);
+	}
+	load_ctx c;
+	memset(&c, 0, sizeof c);
+	c.o = o;
+	char *buf = NULL;
+	size_t cap = 0, len = 0;
+	int r;
+	while ((r = read_line(in, &buf, &cap, &len)) == 1) {
+		c.line++;
+		if (is_blank(buf, len)) continue;
+		c.skip = 1;
+		int st = xs_parse_dump_line(buf, len, load_field, &c);
+		if (st == XS_INVALID_ARGUMENT) {
+			load_report(&c, NULL, 0, NULL, 0, st,
+				"not a dump line: expected one JSON object with \"path\" or \"path_pb\" and optional \"xattrs\" / \"xattrs_pb\"");
+		} else if (st != XS_OK) {
+			load_report(&c, NULL, 0, NULL, 0, st, NULL);
+		}
+	}
+	if (r < 0) load_report(&c, NULL, 0, NULL, 0, XS_IO, "reading the dump failed");
+	free(buf);
+	free(c.path);
+	if (in != stdin) fclose(in);
+	return c.failures ? EXIT_ERROR : EXIT_OK;
+}
+
 int main(int argc, char **argv) {
+
 	cli_opts o;
 	int cols_given = 0;
 	memset(&o, 0, sizeof o);
@@ -929,7 +1135,21 @@ int main(int argc, char **argv) {
 				o.max_width = (size_t)w;
 				continue;
 			}
+			if (strcmp(a, "--allow-unsafe-paths") == 0) { o.allow_unsafe_paths = 1; continue; }
+			if (strcmp(a, "--root") == 0 || strncmp(a, "--root=", 7) == 0) {
+				const char *dir = strchr(a, '=');
+				if (dir) dir++;
+				else if (i + 1 < argc) dir = argv[++i];
+				if (!dir || !*dir) {
+					fprintf(stderr, PROG ": --root needs a directory\n");
+					usage(stderr);
+					return EXIT_USAGE;
+				}
+				o.root = dir;
+				continue;
+			}
 			if (strcmp(a, "--color") == 0) { o.color = 1; continue; }
+
 			if (strcmp(a, "--no-color") == 0 || strcmp(a, "--no-ansi") == 0 || strcmp(a, "--simple") == 0) { o.color = 0; continue; }
 			if (strcmp(a, "-d") == 0 || strcmp(a, "--depth") == 0 ||
 			    strncmp(a, "-d=", 3) == 0 || strncmp(a, "--depth=", 8) == 0) {
@@ -990,7 +1210,12 @@ int main(int argc, char **argv) {
 		if (strcmp(cmd, "dump") == 0 || strcmp(cmd, "dmp") == 0) o.values = 1;
 		return cmd_lst(&o, pos[1]);
 	}
+	if (strcmp(cmd, "load") == 0) {
+		if (nargs > 1) { usage(stderr); return EXIT_USAGE; }
+		return cmd_load(&o, nargs == 1 ? pos[1] : NULL);
+	}
 	if (strcmp(cmd, "limits") == 0 || strcmp(cmd, "lim") == 0) {
+
 		if (nargs > 1) { usage(stderr); return EXIT_USAGE; }
 		return cmd_limits(&o, nargs == 1 ? pos[1] : ".");
 	}

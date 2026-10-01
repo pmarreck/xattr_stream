@@ -272,7 +272,50 @@ pub export fn xs_walk(path: ?[*]const u8, path_len: usize, order: c_int, max_dep
 	return XS_OK;
 }
 
+pub const XS_DUMP_PATH: c_int = @intFromEnum(xs.dump.Field.path);
+pub const XS_DUMP_PATH_PB: c_int = @intFromEnum(xs.dump.Field.path_pb);
+pub const XS_DUMP_XATTR: c_int = @intFromEnum(xs.dump.Field.xattr);
+pub const XS_DUMP_XATTR_PB: c_int = @intFromEnum(xs.dump.Field.xattr_pb);
+
+/// Field visitor for xs_parse_dump_line: return 0 to continue, non-zero to stop.
+pub const xs_dump_fn = *const fn (userdata: ?*anyopaque, field: c_int, key: [*]const u8, key_len: usize, value: [*]const u8, value_len: usize) callconv(.c) c_int;
+
+const DumpCtx = struct { cb: xs_dump_fn, ud: ?*anyopaque };
+
+fn dumpEmit(ctx: *DumpCtx, field: xs.dump.Field, key: []const u8, value: []const u8) bool {
+	return ctx.cb(ctx.ud, @intFromEnum(field), key.ptr, key.len, value.ptr, value.len) == 0;
+}
+
+/// Parse one line of the `dump --json` format (see dump.zig). XS_OK after
+/// all fields were visited (or the visitor stopped), XS_INVALID_ARGUMENT for
+/// a malformed line or NULL callback, XS_OUT_OF_MEMORY.
+pub export fn xs_parse_dump_line(line: ?[*]const u8, len: usize, cb: ?xs_dump_fn, userdata: ?*anyopaque) callconv(.c) c_int {
+	const l = slice(line, len) orelse return XS_INVALID_ARGUMENT;
+	const f = cb orelse return XS_INVALID_ARGUMENT;
+	var ctx = DumpCtx{ .cb = f, .ud = userdata };
+	xs.dump.parseLine(ffi_allocator, l, &ctx, dumpEmit) catch |e| return switch (e) {
+		error.OutOfMemory => XS_OUT_OF_MEMORY,
+		error.Malformed => XS_INVALID_ARGUMENT,
+	};
+	return XS_OK;
+}
+
+/// 1 when `path` is relative and never climbs above where it starts (see
+/// dump.isContainedRelativePath), else 0.
+pub export fn xs_is_contained_relative_path(path: ?[*]const u8, len: usize) callconv(.c) c_int {
+	const p = slice(path, len) orelse return 0;
+	return if (xs.dump.isContainedRelativePath(p)) 1 else 0;
+}
+
+/// 1 when `path` is absolute under POSIX or Windows rules (dump.isAbsolutePath).
+pub export fn xs_is_absolute_path(path: ?[*]const u8, len: usize) callconv(.c) c_int {
+	const p = slice(path, len) orelse return 0;
+	return if (xs.dump.isAbsolutePath(p)) 1 else 0;
+}
+
 pub export fn xs_status_name(s: c_int) callconv(.c) [*:0]const u8 {
+
+
 	return xs.statusName(s).ptr;
 }
 

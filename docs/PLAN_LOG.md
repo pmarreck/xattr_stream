@@ -30,3 +30,6 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 
 - [x] [Recently done] Delete bin/xattr_stream_ape.com (Peter's call, 2026-09-16 10:30 EDT; copy in ~/.Trash); commit AGENTS.md symlink + jj_cheatsheet removal
 - [x] [Recently done] Binary values via printable_binary (Peter's call, 2026-09-16 11:50 EDT): Zig dependency pinned in build.zig.zon + flake zigDeps FOD; the C CLI links its static lib through its own header; `--hex` keeps hex; fixture from the independent LuaJIT implementation (12:00 EDT)
+- [x] [Recently done] Colors: names bright orange, values light blue on a tty only (2026-09-16 11:55 EDT)
+- [x] [Recently done] Dangling symlinks skipped in walks; `--debug`/DEBUG reports them (2026-09-16 12:10 EDT)
+- [x] [Recently done] Output formats (Peter, 2026-09-16 12:29 EDT): --tsv/--csv/--table/--md, --cols widths, left-ellipsis paths, --utf8 type column utf8|pb|hex, names and values through printable-binary in delimited formats (done 2026-09-16 12:45 EDT, 02ff47d)

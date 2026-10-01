@@ -205,3 +205,32 @@ test "xs_is_utf8 classifies byte strings as UTF-8 or not, over accept and reject
 	try expectEqual(reject.len, rejected);
 	try expectEqual(@as(c_int, 1), ffi.xs_is_utf8(null, 0));
 }
+
+const DumpSink = struct {
+	text: std.ArrayList(u8) = .empty,
+
+	fn cb(ud: ?*anyopaque, field: c_int, key: [*]const u8, key_len: usize, value: [*]const u8, value_len: usize) callconv(.c) c_int {
+		const self: *DumpSink = @ptrCast(@alignCast(ud.?));
+		const line = std.fmt.allocPrint(alloc, "{d}|{s}|{s}\n", .{ field, key[0..key_len], value[0..value_len] }) catch return 1;
+		defer alloc.free(line);
+		self.text.appendSlice(alloc, line) catch return 1;
+		return 0;
+	}
+};
+
+test "xs_parse_dump_line reports fields through a callback; xs_is_contained_relative_path guards restores" {
+	var sink = DumpSink{};
+	defer sink.text.deinit(alloc);
+	const line = "{\"path_pb\":\"a\xe2\x81\x84b\",\"xattrs\":{\"k\":\"v w\"},\"xattrs_pb\":{\"n\":\"\xc2\xb7\"}}";
+	try expectEqual(ffi.XS_OK, ffi.xs_parse_dump_line(line.ptr, line.len, DumpSink.cb, &sink));
+	try expectEqualStrings("1||a\xe2\x81\x84b\n2|k|v w\n3|n|\xc2\xb7\n", sink.text.items);
+	try expectEqual(ffi.XS_DUMP_PATH, 0);
+	try expectEqual(ffi.XS_DUMP_XATTR_PB, 3);
+	try expectEqual(ffi.XS_INVALID_ARGUMENT, ffi.xs_parse_dump_line("{}", 2, DumpSink.cb, &sink));
+	try expectEqual(ffi.XS_INVALID_ARGUMENT, ffi.xs_parse_dump_line(line.ptr, line.len, null, &sink));
+	try expectEqual(@as(c_int, 1), ffi.xs_is_contained_relative_path("a/b", 3));
+	try expectEqual(@as(c_int, 0), ffi.xs_is_contained_relative_path("../b", 4));
+	try expectEqual(@as(c_int, 0), ffi.xs_is_contained_relative_path(null, 0));
+	try expectEqual(@as(c_int, 1), ffi.xs_is_absolute_path("C:x", 3));
+	try expectEqual(@as(c_int, 0), ffi.xs_is_absolute_path("x", 1));
+}
