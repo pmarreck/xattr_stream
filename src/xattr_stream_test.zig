@@ -206,7 +206,7 @@ test "values above max_value_len are TooLarge on set and get, without unbounded 
 }
 
 test "default value bound is the smallest OS ceiling (Linux 64 KiB) on every OS" {
-	// Peter, 2026-09-16: cap every OS at the minimum of the maxima so a value
+	// Design decision, 2026-09-16: cap every OS at the minimum of the maxima so a value
 	// that works on one platform works on all of them, no surprises.
 	try expectEqual(@as(usize, 65536), xs.default_max_value_len);
 	var fx = try Fixture.init();

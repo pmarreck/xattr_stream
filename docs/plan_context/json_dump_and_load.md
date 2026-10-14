@@ -1,6 +1,6 @@
 # JSON dump and load
 
-Decisions by Peter, 2026-09-30 and 2026-10-01.
+Decisions by BDFN (Benevolent Dictator For Now), 2026-09-30 and 2026-10-01.
 
 ## Format
 

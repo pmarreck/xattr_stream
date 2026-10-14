@@ -100,7 +100,7 @@ With `--json`, `dump` (or `lst --values`) writes one JSON object per file,
 one per line, in walk order. Files without attributes produce no line:
 
 ```
-{"path":"docs/notes.md","xattrs":{"owner":"Peter","state":"draft, v2"}}
+{"path":"docs/notes.md","xattrs":{"owner":"alice","state":"draft, v2"}}
 {"path_pb":"jd⁄cafȚ","xattrs":{"k":"v"}}
 ```
 
@@ -133,7 +133,7 @@ the dump still loads, and the exit code is 1.
 
 ```sh
 $ xattr-stream dump -r photos
-photos	owner	Peter
+photos	owner	alice
 photos/2026/beach.jpg	caption	sunny day
 photos/2026/beach.jpg	thumb.bin	·¯żŻ
 $ xattr-stream --utf8 dump photos/2026/beach.jpg
@@ -143,7 +143,7 @@ $ xattr-stream --table --cols 20,10,12 dump -r photos
 +----------------------+------------+--------------+
 | path                 | name       | value        |
 +----------------------+------------+--------------+
-| photos               | owner      | Peter        |
+| photos               | owner      | alice        |
 | …otos/2026/beach.jpg | caption    | sunny day    |
 | …otos/2026/beach.jpg | thumb.bin  | ·¯żŻ         |
 +----------------------+------------+--------------+
@@ -306,7 +306,7 @@ there. Status as of 2026-09-15:
 
 | Target | Compiles | Runtime suite |
 |---|---|---|
-| x86_64-linux | yes | passes (Thelio, ZFS) |
+| x86_64-linux | yes | passes (ZFS) |
 | aarch64-linux | yes | not run |
 | aarch64-macos | yes | not run |
 | x86_64-windows | yes | not run |

@@ -9,8 +9,9 @@ applications written in C, Rust, Zig and LuaJIT can attach per-file metadata
 without each reimplementing three OS interfaces and their error quirks.
 
 Origin: the tool started (December 2025) as a Linux/macOS C helper that
-streamed xattr values through stdin/stdout for Peter's own scripts. On
-2026-09-15 Peter asked, through the orchestrator agent Einstein, to make it a
+streamed xattr values through stdin/stdout for personal scripts of BDFN (Benevolent
+Dictator For Now). On
+2026-09-15 BDFN asked, through the project coordinator, to make it a
 general-purpose cross-platform attribute library and to consider a Zig 0.16
 rewrite. The rewrite was chosen; the reasoning is in README "Why Zig".
 
@@ -49,7 +50,7 @@ data streams were chosen; see README).
 ## Constraints and tradeoffs
 
 - Zig 0.16 only; no upgrade to 0.17 as part of this work.
-- One compile-time dependency, `printable_binary` (Peter, 2026-09-16), used
+- One compile-time dependency, `printable_binary` (BDFN, 2026-09-16), used
   only by the CLI to render binary values reversibly; the library itself
   has none.
 - MIT license retained.
@@ -58,7 +59,7 @@ data streams were chosen; see README).
   works anywhere works everywhere.
 - Linux logical names live in the `user.` namespace only; other namespaces
   are reachable through raw mode.
-- The Cosmopolitan APE single binary is retired (Peter, 2026-09-16). Its
+- The Cosmopolitan APE single binary is retired (BDFN, 2026-09-16). Its
   intent, an easy cross-platform executable for attributes, is met by the
   static per-target CLI binaries instead.
 
@@ -69,7 +70,7 @@ data streams were chosen; see README).
 - `nix flake check` runs the same as sandboxed checks plus the five-target
   cross-compile.
 - Runtime verification is honest per platform: Linux x86_64 verified on the
-  Thelio; macOS and Windows are cross-compiled and compile-checked but not
+  the development machine; macOS and Windows are cross-compiled and compile-checked but not
   yet executed (see README "Platform verification").
 
 ## Open questions

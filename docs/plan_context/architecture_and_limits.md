@@ -4,7 +4,7 @@ Moved out of PLAN.md on 2026-09-28 so the plan stays a checklist.
 
 ## Mandate
 
-Peter via Einstein, 2026-09-15: make xattr_stream a small cross-platform
+BDFN (Benevolent Dictator For Now) via the project coordinator, 2026-09-15: make xattr_stream a small cross-platform
 byte-attribute library plus CLI, usable from C, Rust, Zig and LuaJIT, with
 Windows support, normalized names, distinguishable errors, and a
 self-contained test suite. Purpose and boundaries live in INTENT.md.
@@ -43,18 +43,18 @@ Rewrite in Zig 0.16; reasoning in README "Why Zig". Layout:
 ## Blocked items (as of 2026-09-28 23:20 EDT)
 
 - Runtime verification on aarch64 Linux, macOS and Windows: cross-compiles
-  are green in CI, but no machine of those kinds is reachable from Thelio.
-  Unblocks when Peter provides a Mac, an aarch64 Linux host, or a Windows box
+  are green in CI, but no machine of those kinds is available to the developers.
+  Unblocks with a Mac, an aarch64 Linux host, or a Windows box
   (or a CI runner for any of them).
 - macOS signed-app xattr assessment: needs a Mac, isolated artifacts and a
   throwaway signing identity. Same blocker.
-- Encoding detection beyond UTF-8 (uchardetz): conditional on legacy text
-  values ever mattering to Peter; the `--utf8` type column already has room
-  for a third label. Not started on purpose.
+- Encoding detection beyond UTF-8 (uchardetz): dropped by the 2026-09-30
+  decision. Every value goes through printable-binary, which is lossless
+  for any bytes, so no charset guessing is needed.
 
 ## Design note, not a work item
 
 Caching a probed per-filesystem value limit keyed by filesystem identity with
-invalidation, modelled on `../os_counters`. Peter asked for the design
+invalidation, modeled on a sibling project's counter cache. BDFN asked for the design
 discussion only (2026-09-16); it is recorded in the transcript and must not be
 built without a new request.

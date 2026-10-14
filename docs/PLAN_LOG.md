@@ -4,7 +4,7 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 
 ## Retired 2026-09-28
 
-- [x] [Done] Acknowledge Einstein's note with a durable reply (23:15 EDT)
+- [x] [Done] Acknowledge the project coordinator's note with a durable reply (23:15 EDT)
 - [x] [Done] Decide Zig rewrite vs C extraction and record why (23:20 EDT)
 - [x] [Done] Scaffold build.zig, build.zig.zon, flake.nix (zig-overlay 0.16.0), ./build, ./build_all, ./test (23:30 EDT)
 - [x] [Done] Name policy as set classifiers: accept set, reject set with reasons, bijection, raw mode, Windows injection chars (23:12 EDT)
@@ -20,16 +20,21 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Open] Mechatron Prime: webhook already existed; 2ed4ca8 PASS in 3m16s (23:43 EDT)
 - [x] [Open] Default value bound = 64 KiB on every OS (min of the OS maxima)
 - [x] [Open] Naming: auto-prefix on Linux only; caller-supplied `user.` is refused with a Linux-specific reason; CLI warns above 4096 bytes (11:05 EDT)
-- [x] [Open] Final durable report to Einstein; original note Trashed (23:42 EDT)
+- [x] [Open] Final durable report to the project coordinator; original note Trashed (23:42 EDT)
 - [x] [Open] Listing with values: `lst --values` / `dump`; printable single-line UTF-8 as text, else hex; JSON mirrors it; `get` stays raw (11:35 EDT)
-- [x] [Open] Output format review by Peter (columns: [path] name [type value])
+- [x] [Open] Output format review by BDFN (Benevolent Dictator For Now) (columns: [path] name [type value])
 - [x] [Open] Colors: names bright orange, values light blue on a tty only (11:55 EDT)
 - [x] [Open] Dangling symlinks skipped in walks; `--debug`/DEBUG reports them
 
 ## Retired 2026-10-01
 
-- [x] [Recently done] Delete bin/xattr_stream_ape.com (Peter's call, 2026-09-16 10:30 EDT; copy in ~/.Trash); commit AGENTS.md symlink + jj_cheatsheet removal
-- [x] [Recently done] Binary values via printable_binary (Peter's call, 2026-09-16 11:50 EDT): Zig dependency pinned in build.zig.zon + flake zigDeps FOD; the C CLI links its static lib through its own header; `--hex` keeps hex; fixture from the independent LuaJIT implementation (12:00 EDT)
+- [x] [Recently done] Delete bin/xattr_stream_ape.com (BDFN's call, 2026-09-16 10:30 EDT; copy in ~/.Trash); commit AGENTS.md symlink + jj_cheatsheet removal
+- [x] [Recently done] Binary values via printable_binary (BDFN's call, 2026-09-16 11:50 EDT): Zig dependency pinned in build.zig.zon + flake zigDeps FOD; the C CLI links its static lib through its own header; `--hex` keeps hex; fixture from the independent LuaJIT implementation (12:00 EDT)
 - [x] [Recently done] Colors: names bright orange, values light blue on a tty only (2026-09-16 11:55 EDT)
 - [x] [Recently done] Dangling symlinks skipped in walks; `--debug`/DEBUG reports them (2026-09-16 12:10 EDT)
-- [x] [Recently done] Output formats (Peter, 2026-09-16 12:29 EDT): --tsv/--csv/--table/--md, --cols widths, left-ellipsis paths, --utf8 type column utf8|pb|hex, names and values through printable-binary in delimited formats (done 2026-09-16 12:45 EDT, 02ff47d)
+- [x] [Recently done] Output formats (BDFN, 2026-09-16 12:29 EDT): --tsv/--csv/--table/--md, --cols widths, left-ellipsis paths, --utf8 type column utf8|pb|hex, names and values through printable-binary in delimited formats (done 2026-09-16 12:45 EDT, 02ff47d)
+
+## Retired 2026-10-14
+
+- [x] [Active (2026-10-01)] pkg-config file (relocatable via pcfiledir) installed with the library; ./test and the test-overlay-pkgconfig check build the C consumer through it (done 2026-10-01 17:20 EDT)
+- [x] [Recently done] Migrate PLAN.md to the planning-work format; record blockers (done 2026-09-28 23:20 EDT)
