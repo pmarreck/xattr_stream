@@ -37,12 +37,25 @@ step "zig build test" zig build test
 step "zig build" zig build
 step "cli (bash)" bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
 
+# Runs a compile or link command and fails on any diagnostic it prints, so
+# linker warnings (for example a macOS deployment-target mismatch) cannot
+# hide behind a passing exit code.
+quiet_build() {
+	local log rc
+	log="$("$@" 2>&1)"
+	rc=$?
+	if [[ $rc -ne 0 || -n "$log" ]]; then
+		printf '%s\n' "$log" >&2
+		[[ $rc -ne 0 ]] || echo "build printed diagnostics: $*" >&2
+		return 1
+	fi
+}
 consumer_c() {
-	clang -std=c99 -Wall -Wextra -Werror -pedantic -Izig-out/include \
+	quiet_build clang -std=c99 -Wall -Wextra -Werror -pedantic -Izig-out/include \
 		-o "$TMPDIR/xs_consumer_c" tests/consumers/c/consumer.c zig-out/lib/libxattr_stream.a && "$TMPDIR/xs_consumer_c"
 }
 consumer_rust() {
-	rustc --edition 2021 -O -L zig-out/lib -o "$TMPDIR/xs_consumer_rs" tests/consumers/rust/consumer.rs && "$TMPDIR/xs_consumer_rs"
+	quiet_build rustc --edition 2021 -O -C link-arg=zig-out/lib/libxattr_stream.a -o "$TMPDIR/xs_consumer_rs" tests/consumers/rust/consumer.rs && "$TMPDIR/xs_consumer_rs"
 }
 consumer_luajit() {
 	luajit tests/consumers/luajit/consumer.lua "zig-out/lib/libxattr_stream$shared_ext"
@@ -65,11 +78,11 @@ consumer_pkgconfig() {
 		[[ "$word" == -lxattr_stream || "$word" == -L* ]] || private+=" $word"
 	done
 	# shellcheck disable=SC2086 # word splitting of pkg-config flags is intended
-	clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_static" tests/consumers/c/consumer.c $flags "$libdir/libxattr_stream.a" $private || return 1
+	quiet_build clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_static" tests/consumers/c/consumer.c $flags "$libdir/libxattr_stream.a" $private || return 1
 	"$TMPDIR/xs_consumer_pc_static" || return 1
 	flags="$(pkg-config --cflags --libs "$pc")" || return 1
 	# shellcheck disable=SC2086
-	clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_shared" tests/consumers/c/consumer.c $flags -Wl,-rpath,"$libdir" || return 1
+	quiet_build clang -std=c99 -Wall -Wextra -Werror -pedantic -o "$TMPDIR/xs_consumer_pc_shared" tests/consumers/c/consumer.c $flags -Wl,-rpath,"$libdir" || return 1
 	"$TMPDIR/xs_consumer_pc_shared"
 }
 consumer_zig() {

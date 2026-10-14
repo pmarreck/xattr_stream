@@ -7,6 +7,17 @@ const alloc = std.testing.allocator;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 
+/// Path equality that treats \ and / as the same separator: the walker joins
+/// with the platform separator, while the fakes below spell paths with '/'.
+fn eqPath(got: []const u8, want: []const u8) bool {
+	if (got.len != want.len) return false;
+	for (got, want) |g, w| {
+		const gs = if (g == '\\') '/' else g;
+		if (gs != w) return false;
+	}
+	return true;
+}
+
 /// r/
 ///   b/ z
 ///   a/ y, x/ deep
@@ -17,21 +28,21 @@ const FakeTree = struct {
 	var deny_b: bool = false;
 
 	pub fn kindOf(path: []const u8) walk.Error!walk.Kind {
-		if (std.mem.eql(u8, path, "r/l")) return .symlink;
-		if (std.mem.eql(u8, path, "r") or std.mem.eql(u8, path, "r/a") or std.mem.eql(u8, path, "r/b") or std.mem.eql(u8, path, "r/a/x")) return .directory;
-		if (std.mem.eql(u8, path, "missing")) return error.NotFound;
+		if (eqPath(path, "r/l")) return .symlink;
+		if (eqPath(path, "r") or eqPath(path, "r/a") or eqPath(path, "r/b") or eqPath(path, "r/a/x")) return .directory;
+		if (eqPath(path, "missing")) return error.NotFound;
 		return .other;
 	}
 
 	pub fn children(allocator: std.mem.Allocator, path: []const u8) walk.Error![]walk.Entry {
 		const Raw = struct { name: []const u8, kind: walk.Kind };
-		const raw: []const Raw = if (std.mem.eql(u8, path, "r"))
+		const raw: []const Raw = if (eqPath(path, "r"))
 			&.{ .{ .name = "b", .kind = .directory }, .{ .name = "a", .kind = .directory }, .{ .name = "f1", .kind = .other }, .{ .name = "l", .kind = .symlink } }
-		else if (std.mem.eql(u8, path, "r/a"))
+		else if (eqPath(path, "r/a"))
 			&.{ .{ .name = "y", .kind = .other }, .{ .name = "x", .kind = .directory } }
-		else if (std.mem.eql(u8, path, "r/a/x"))
+		else if (eqPath(path, "r/a/x"))
 			&.{.{ .name = "deep", .kind = .other }}
-		else if (std.mem.eql(u8, path, "r/b"))
+		else if (eqPath(path, "r/b"))
 			(if (deny_b) return error.Permission else &.{.{ .name = "z", .kind = .other }})
 		else
 			return error.Io; // listing anything else (e.g. the symlink) is a walker bug
@@ -54,7 +65,7 @@ const Recorder = struct {
 		const line = std.fmt.allocPrint(alloc, "{d} {s} {s}{s}\n", .{ v.depth, @tagName(v.kind), norm[0..v.path.len], if (v.status != .ok) " !" else "" }) catch unreachable;
 		defer alloc.free(line);
 		self.lines.appendSlice(alloc, line) catch unreachable;
-		if (self.stop_at) |s| if (std.mem.eql(u8, s, v.path)) return false;
+		if (self.stop_at) |s| if (eqPath(v.path, s)) return false;
 		return true;
 	}
 
@@ -153,14 +164,17 @@ test "an unlistable directory is reported in place and the walk continues" {
 const OrderTree = struct {
 	var log: std.ArrayList(u8) = .empty;
 	pub fn kindOf(path: []const u8) walk.Error!walk.Kind {
-		return if (std.mem.eql(u8, path, "r") or std.mem.eql(u8, path, "r/d1") or std.mem.eql(u8, path, "r/d2")) .directory else .other;
+		return if (eqPath(path, "r") or eqPath(path, "r/d1") or eqPath(path, "r/d2")) .directory else .other;
 	}
 	pub fn children(allocator: std.mem.Allocator, path: []const u8) walk.Error![]walk.Entry {
-		const line = std.fmt.allocPrint(alloc, "read {s}\n", .{path}) catch unreachable;
+		var norm: [64]u8 = undefined;
+		@memcpy(norm[0..path.len], path);
+		std.mem.replaceScalar(u8, norm[0..path.len], '\\', '/');
+		const line = std.fmt.allocPrint(alloc, "read {s}\n", .{norm[0..path.len]}) catch unreachable;
 		defer alloc.free(line);
 		log.appendSlice(alloc, line) catch unreachable;
 		const Raw = struct { name: []const u8, kind: walk.Kind };
-		const raw: []const Raw = if (std.mem.eql(u8, path, "r"))
+		const raw: []const Raw = if (eqPath(path, "r"))
 			&.{ .{ .name = "d1", .kind = .directory }, .{ .name = "d2", .kind = .directory }, .{ .name = "f", .kind = .other } }
 		else
 			&.{.{ .name = "leaf", .kind = .other }};
@@ -175,7 +189,10 @@ test "breadth-first visits every child of a directory before reading the next di
 	defer OrderTree.log.deinit(alloc);
 	const Rec = struct {
 		fn visit(_: *u8, v: walk.Visit) bool {
-			const line = std.fmt.allocPrint(alloc, "visit {s}\n", .{v.path}) catch unreachable;
+			var norm: [64]u8 = undefined;
+			@memcpy(norm[0..v.path.len], v.path);
+			std.mem.replaceScalar(u8, norm[0..v.path.len], '\\', '/');
+			const line = std.fmt.allocPrint(alloc, "visit {s}\n", .{norm[0..v.path.len]}) catch unreachable;
 			defer alloc.free(line);
 			OrderTree.log.appendSlice(alloc, line) catch unreachable;
 			return true;

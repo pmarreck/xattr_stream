@@ -302,15 +302,16 @@ reports.
 ## Platform verification
 
 Cross-compiling proves the code builds for a target, not that it runs
-there. Status as of 2026-09-15:
+there. Native runs as of 2026-10-14 (details in
+docs/plan_context/platform_verification.md):
 
-| Target | Compiles | Runtime suite |
-|---|---|---|
-| x86_64-linux | yes | passes (ZFS) |
-| aarch64-linux | yes | not run |
-| aarch64-macos | yes | not run |
-| x86_64-windows | yes | not run |
-| aarch64-windows | yes | not run |
+| Target | Compiles | Zig tests (real attribute I/O) | CLI suite | Consumers |
+|---|---|---|---|---|
+| x86_64-linux (ZFS) | yes | 97/97 | 303/303 | C, Rust, LuaJIT, Zig, pkg-config |
+| aarch64-macos 26 (APFS) | yes | 97/97 | 286 pass, 1 n/a | C, Rust, LuaJIT, Zig, pkg-config |
+| x86_64-windows 10 (NTFS) | yes | 97/99: the one concurrency test, run in two binaries, sees partial values | not yet ported to Windows | not run |
+| aarch64-linux | yes | not run | not run | not run |
+| aarch64-windows | yes | not run | not run | not run |
 
 Sandboxed Nix checks cannot exercise attribute I/O at all: Nix's build
 sandbox installs a seccomp rule that makes `setxattr` fail with ENOTSUP,
@@ -321,10 +322,10 @@ proves is compilation for all targets, the pure name and packing logic, and
 the skip path. Real attribute I/O is verified by `./test`, which runs in the
 dev shell outside the sandbox.
 
-Unverified items that need a real machine: macOS `pathconf` limit
-reporting, Windows zero-length stream persistence, Windows symlink
-resolution through `path:stream`, and custom xattrs on signed macOS app
-bundles (see PLAN.md).
+Verified natively: macOS `pathconf` limit reporting (APFS reports a
+56-bit size), Windows zero-length streams, and Windows symlink resolution
+through `path:stream`. Still unverified: custom attributes on signed macOS
+app bundles, and the ARM Linux and ARM Windows targets (see PLAN.md).
 
 ## Why Zig
 

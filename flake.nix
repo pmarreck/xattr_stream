@@ -146,7 +146,7 @@
           '';
           test-consumer-rust = mkCheck "test-consumer-rust" [ pkgs.rustc ] ''
             zig build
-            rustc --edition 2021 -O -L zig-out/lib -o consumer_rs tests/consumers/rust/consumer.rs
+            rustc --edition 2021 -O -C link-arg=zig-out/lib/libxattr_stream.a -o consumer_rs tests/consumers/rust/consumer.rs
             ./consumer_rs
           '';
           test-consumer-luajit = mkCheck "test-consumer-luajit" [ pkgs.luajit ] ''

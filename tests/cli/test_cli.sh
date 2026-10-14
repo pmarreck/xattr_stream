@@ -20,6 +20,13 @@ passes=0
 current=""
 
 pass() { passes=$((passes + 1)); }
+# A check that cannot apply on this platform (not a failure, not a pass):
+# printed and counted so the summary never looks greener than it is.
+not_applicable=0
+na() {
+	not_applicable=$((not_applicable + 1))
+	printf 'n/a [%s]: %s\n' "$current" "$*"
+}
 fail() {
 	failures=$((failures + 1))
 	printf 'FAIL [%s]: %s\n' "$current" "$*" >&2
@@ -553,24 +560,30 @@ assert_out '{"path":"fmt/plain","xattrs":{"key":"one"}}'
 # xattrs_pb. Expected encodings come from the independent LuaJIT encoder.
 mkdir -p "$tmpdir/jd"
 nonutf="$tmpdir/jd/caf"$'\xe9'
-: >"$nonutf"
-printf 'v' | "$BIN" put "$nonutf" k
-out="$(run_in_tmp --json dump jd/caf$'\xe9')"; rc=$?
-assert_rc 0
-assert_out '{"path_pb":"jd⁄cafȚ","xattrs":{"k":"v"}}'
-if [[ "$(os_name)" == "Linux" ]]; then
-	printf 'raw' | "$BIN" --raw put "$nonutf" user.k$'\xff'
-	out="$(run_in_tmp --raw --json dump jd/caf$'\xe9')"; rc=$?
+# Some filesystems (APFS, NTFS) refuse names that are not UTF-8, so no such
+# path can exist there; probe instead of assuming by OS.
+nonutf_fs=0
+{ : >"$nonutf"; } 2>/dev/null && nonutf_fs=1
+if [[ $nonutf_fs -eq 1 ]]; then
+	printf 'v' | "$BIN" put "$nonutf" k
+	out="$(run_in_tmp --json dump jd/caf$'\xe9')"; rc=$?
 	assert_rc 0
-	assert_out '{"path_pb":"jd⁄cafȚ","xattrs":{"user.k":"v"},"xattrs_pb":{"user.kŻ":"raw"}}'
+	assert_out '{"path_pb":"jd⁄cafȚ","xattrs":{"k":"v"}}'
+	if [[ "$(os_name)" == "Linux" ]]; then
+		printf 'raw' | "$BIN" --raw put "$nonutf" user.k$'\xff'
+		out="$(run_in_tmp --raw --json dump jd/caf$'\xe9')"; rc=$?
+		assert_rc 0
+		assert_out '{"path_pb":"jd⁄cafȚ","xattrs":{"user.k":"v"},"xattrs_pb":{"user.kŻ":"raw"}}'
+	fi
+	# Names-only recursive JSON follows the same rule.
+	out="$(run_in_tmp --json lst -r jd)"; rc=$?
+	[[ "$out" == *'{"path_pb":"jd⁄cafȚ","name":"k"}'* && "$out" != *$'\xe9'* ]] && pass || fail "names-only JSON with non-UTF-8 path: '$out'"
+	# JSON errors on stderr follow the same rule for a non-UTF-8 path.
+	err="$(cd "$tmpdir" && "$BIN" --json get jd/caf$'\xe9' nope 2>&1 >/dev/null)"
+	[[ "$err" == *'"path_pb":"jd⁄cafȚ"'* && "$err" != *$'\xe9'* ]] && pass || fail "JSON error with non-UTF-8 path: '$err'"
+else
+	na "this filesystem refuses non-UTF-8 file names, so path_pb output cannot arise"
 fi
-# Names-only recursive JSON follows the same rule.
-out="$(run_in_tmp --json lst -r jd)"; rc=$?
-[[ "$out" == *'{"path_pb":"jd⁄cafȚ","name":"k"}'* && "$out" != *$'\xe9'* ]] && pass || fail "names-only JSON with non-UTF-8 path: '$out'"
-# JSON errors on stderr follow the same rule for a non-UTF-8 path.
-
-err="$(cd "$tmpdir" && "$BIN" --json get jd/caf$'\xe9' nope 2>&1 >/dev/null)"
-[[ "$err" == *'"path_pb":"jd⁄cafȚ"'* && "$err" != *$'\xe9'* ]] && pass || fail "JSON error with non-UTF-8 path: '$err'"
 # Every line of a recursive dump is a JSON document.
 
 if command -v jq >/dev/null 2>&1; then
@@ -781,10 +794,14 @@ assert_rc 7
 
 if [[ "$(os_name)" == "Linux" ]]; then
 	current="load decodes path_pb and raw xattrs_pb"
-	out="$(cd "$tmpdir" && printf '%s\n' '{"path_pb":"jd⁄cafȚ","xattrs":{"k2":"z"}}' | "$BIN" load 2>&1)"; rc=$?
-	assert_rc 0
-	out=""; err=""; rc=0; capture "$BIN" get "$nonutf" k2
-	assert_out "z"
+	if [[ $nonutf_fs -eq 1 ]]; then
+		out="$(cd "$tmpdir" && printf '%s\n' '{"path_pb":"jd⁄cafȚ","xattrs":{"k2":"z"}}' | "$BIN" load 2>&1)"; rc=$?
+		assert_rc 0
+		out=""; err=""; rc=0; capture "$BIN" get "$nonutf" k2
+		assert_out "z"
+	else
+		na "this filesystem refuses non-UTF-8 file names, so load of path_pb cannot be exercised"
+	fi
 	: >"$tmpdir/jd/plain"
 	line='{"path":"jd/plain","xattrs_pb":{"user.kŻ":"raw2"}}'
 	out="$(cd "$tmpdir" && printf '%s\n' "$line" | "$BIN" --raw load 2>&1)"; rc=$?
@@ -797,6 +814,6 @@ if [[ "$(os_name)" == "Linux" ]]; then
 	assert_err_has "XS_INVALID_NAME"
 fi
 
-echo "CLI tests: $passes passed, $failures failed"
+echo "CLI tests: $passes passed, $failures failed, $not_applicable not applicable on this platform"
 
 exit "$failures"

@@ -20,6 +20,14 @@ const Artifacts = struct {
 
 /// The Zig core links libc only where the OS adapter needs it (macOS
 /// libSystem). Linux uses raw syscalls; Windows imports kernel32 directly.
+/// Native builds on a macOS host target a fixed minimum release instead of
+/// the running one, so the archive links without deployment-target warnings
+/// into programs built for older macOS (the Nix toolchain links for 14.0).
+fn defaultTarget() std.Target.Query {
+	if (@import("builtin").os.tag != .macos) return .{};
+	return .{ .os_tag = .macos, .os_version_min = .{ .semver = .{ .major = 13, .minor = 0, .patch = 0 } } };
+}
+
 fn coreNeedsLibc(target: std.Build.ResolvedTarget) bool {
 	return target.result.os.tag == .macos;
 }
@@ -120,7 +128,7 @@ fn makeArtifacts(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
 }
 
 pub fn build(b: *std.Build) void {
-	const target = b.standardTargetOptions(.{});
+	const target = b.standardTargetOptions(.{ .default_target = defaultTarget() });
 	const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseFast)") orelse .ReleaseFast;
 
 	// Importable Zig module for sibling Zig projects (no C exports).

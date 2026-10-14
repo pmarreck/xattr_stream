@@ -38,3 +38,4 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 
 - [x] [Active (2026-10-01)] pkg-config file (relocatable via pcfiledir) installed with the library; ./test and the test-overlay-pkgconfig check build the C consumer through it (done 2026-10-01 17:20 EDT)
 - [x] [Recently done] Migrate PLAN.md to the planning-work format; record blockers (done 2026-09-28 23:20 EDT)
+- [x] [Active (2026-10-01)] Flake overlay `overlays.default` providing pkgs.xattr_stream (done 2026-10-01 17:20 EDT)

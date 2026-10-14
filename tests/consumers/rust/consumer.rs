@@ -22,7 +22,10 @@ const XS_MISSING: c_int = 1;
 const XS_UNSUPPORTED: c_int = 2;
 const XS_INVALID_NAME: c_int = 7;
 
-#[link(name = "xattr_stream", kind = "static")]
+// No #[link] attribute: the build passes the static archive by path
+// (`-C link-arg=.../libxattr_stream.a`). A `-lxattr_stream` would make
+// Apple's linker pick libxattr_stream.dylib when both are installed, and
+// ld64 has no way to name an archive verbatim through -l.
 extern "C" {
 	fn xs_set(path: *const c_char, path_len: usize, name: *const c_char, name_len: usize, value: *const c_void, value_len: usize, opts: *const XsOptions) -> c_int;
 	fn xs_size(path: *const c_char, path_len: usize, name: *const c_char, name_len: usize, opts: *const XsOptions, out_len: *mut u64) -> c_int;
