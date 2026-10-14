@@ -10,6 +10,11 @@ limits and blockers: docs/plan_context/architecture_and_limits.md.
 - [x] `dump --json`: one object per file, values printable-binary, `path_pb`/`xattrs_pb` for non-UTF-8; JSON warnings and errors use the same rule; `xs_is_utf8` added to the C ABI (done 2026-10-01 17:50 EDT)
 - [x] `load` restores a JSON dump byte-exact (metamorphic dump-load-dump test); refuses absolute and `..` paths unless `--allow-unsafe-paths`; `--root`; parser and guards in src/dump.zig behind the C ABI (done 2026-10-01 17:45 EDT)
 
+## Awaiting owner decisions (walking brief, queued 2026-10-14)
+
+- [ ] Keep or rewrite git history that still names private details (walking-brief id xattr_stream-history-privacy)
+- [ ] Choose how to get runtime tests on macOS, Windows and ARM Linux (walking-brief id xattr_stream-cross-platform-runtime)
+
 ## Blocked on test hardware
 
 - [ ] Runtime verification on aarch64 Linux, macOS, Windows (context: docs/plan_context/architecture_and_limits.md)
