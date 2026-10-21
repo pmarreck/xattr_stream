@@ -1,0 +1,45 @@
+# Native runtime tests on hosted runners for the platforms the project's
+# main CI (Mechatron Prime CI, a Nix builder on x86_64 Linux) can only
+# cross-compile for. Attribute I/O needs a real filesystem, which Nix's
+# build sandbox does not provide, so these run outside any sandbox.
+name: native
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: ${{ matrix.os }} (full ./test)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Full suite in the dev shell
+        run: nix develop -c ./test
+
+  windows:
+    name: ${{ matrix.os }} (Zig tests)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Zig unit and integration tests
+        run: zig build test --summary all
+      - name: Build library and CLI
+        run: zig build
