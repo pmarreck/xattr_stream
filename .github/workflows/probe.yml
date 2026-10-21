@@ -1,0 +1,43 @@
+# Temporary diagnostics: measure the largest single user-attribute value the
+# runner's ext4 accepts, and capture what zig build prints on Windows ARM.
+name: probe
+
+on:
+  push:
+    paths: [".github/workflows/probe.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  ext4-max:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - run: |
+          set -u
+          df -T "$RUNNER_TEMP"; sudo tune2fs -l "$(df --output=source "$RUNNER_TEMP" | tail -1)" 2>/dev/null | grep -Ei 'features|inode size|block size' || true
+          for name in k kk kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk; do
+            f="$RUNNER_TEMP/probe-$name"; : >"$f"
+            lo=0; hi=65536
+            while [ $((hi - lo)) -gt 1 ]; do
+              mid=$(((lo + hi) / 2))
+              if head -c "$mid" /dev/zero | setfattr -n "user.$name" -v "$(head -c "$mid" /dev/zero | tr '\0' 'a')" "$f" 2>/dev/null; then lo=$mid; else hi=$mid; fi
+              setfattr -x "user.$name" "$f" 2>/dev/null || true
+            done
+            echo "name user.$name (${#name} chars): largest accepted value $lo bytes"
+          done
+  windows-arm-zig:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - shell: cmd
+        run: |
+          zig version
+          zig env
+          zig build test --summary all --verbose 2>&1
+          echo exit code %ERRORLEVEL%
+          zig build 2>&1
+          echo exit code %ERRORLEVEL%
