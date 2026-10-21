@@ -13,31 +13,18 @@ jobs:
   ext4-max:
     runs-on: ubuntu-24.04-arm
     steps:
+      - run: sudo apt-get install -y -qq attr >/dev/null
       - run: |
           set -u
+          command -v setfattr
           df -T "$RUNNER_TEMP"; sudo tune2fs -l "$(df --output=source "$RUNNER_TEMP" | tail -1)" 2>/dev/null | grep -Ei 'features|inode size|block size' || true
           for name in k kk kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk; do
             f="$RUNNER_TEMP/probe-$name"; : >"$f"
-            lo=0; hi=65536
+            lo=0; hi=65536; last_err=""
             while [ $((hi - lo)) -gt 1 ]; do
               mid=$(((lo + hi) / 2))
-              if head -c "$mid" /dev/zero | setfattr -n "user.$name" -v "$(head -c "$mid" /dev/zero | tr '\0' 'a')" "$f" 2>/dev/null; then lo=$mid; else hi=$mid; fi
+              if setfattr -n "user.$name" -v "$(head -c "$mid" /dev/zero | tr '\0' 'a')" "$f" 2>"$RUNNER_TEMP/err"; then lo=$mid; else hi=$mid; last_err="$(cat "$RUNNER_TEMP/err")"; fi
               setfattr -x "user.$name" "$f" 2>/dev/null || true
             done
-            echo "name user.$name (${#name} chars): largest accepted value $lo bytes"
+            echo "name user.$name (${#name} chars): largest accepted value $lo bytes; first refusal: ${last_err:-none}"
           done
-  windows-arm-zig:
-    runs-on: windows-11-arm
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-      - shell: cmd
-        run: |
-          zig version
-          zig env
-          zig build test --summary all --verbose 2>&1
-          echo exit code %ERRORLEVEL%
-          zig build 2>&1
-          echo exit code %ERRORLEVEL%
