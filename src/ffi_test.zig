@@ -139,7 +139,7 @@ test "xs_validate_name reports why a name is rejected, with a Linux-specific mes
 	const raw = ffi.xs_options{ .flags = ffi.XS_FLAG_RAW_NAMES, .max_value_len = 0 };
 	try expectEqual(ffi.XS_NAME_OK, ffi.xs_validate_name("user.foo", 8, &raw));
 	try expectEqual(ffi.XS_NAME_INVALID_NATIVE, ffi.xs_validate_name("", 0, &raw));
-	try expectEqual(@as(usize, 4096), ffi.XS_PORTABLE_VALUE_LEN);
+	try expectEqual(@as(usize, 3916), ffi.XS_PORTABLE_VALUE_LEN);
 }
 
 const WalkSink = struct {

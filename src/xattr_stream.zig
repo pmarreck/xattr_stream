@@ -137,7 +137,7 @@ pub const default_max_value_len: usize = 64 << 10;
 pub const max_get_attempts: usize = 4;
 /// First attempt at any read or listing goes into a stack buffer of this
 /// size, so values and name lists that fit cost one syscall instead of a
-/// size query plus a read. Matches XS_PORTABLE_VALUE_LEN.
+/// size query plus a read. Covers every value up to XS_PORTABLE_VALUE_LEN.
 pub const optimistic_read_len: usize = 4096;
 
 pub const Options = struct {

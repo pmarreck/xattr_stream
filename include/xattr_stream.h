@@ -60,12 +60,16 @@ typedef enum xs_status {
 } xs_status;
 
 /*
- * Values up to this size fit every mainstream filesystem's default
- * configuration (ext4 without the ea_inode feature keeps all of an inode's
- * attributes in roughly one 4 KiB block). Advisory: the library does not
- * enforce it; the CLI warns above it.
+ * Largest value that fits on ext4 without the ea_inode feature next to any
+ * valid name, when it is the file's only attribute. One 4 KiB attribute
+ * block holds a 32-byte header, a 4-byte end marker, and per attribute a
+ * 16-byte entry plus the name padded to 4 bytes (the user. prefix is stored
+ * as an index), so the value budget is 4044 - round_up4(name length):
+ * measured 4040 bytes for a 1-byte name and 4008 for a 36-byte name, and
+ * 3916 for the 127-byte maximum. Advisory: the library does not enforce it;
+ * the CLI warns above it.
  */
-#define XS_PORTABLE_VALUE_LEN 4096
+#define XS_PORTABLE_VALUE_LEN 3916
 
 /* Why a name is unacceptable; see xs_validate_name. Values are frozen. */
 typedef enum xs_name_rejection {

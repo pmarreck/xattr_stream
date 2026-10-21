@@ -145,7 +145,7 @@ static void usage(FILE *out) {
 		"  --json          JSON on stdout for len/lst/limits and JSON errors on stderr;\n"
 		"                  dump writes one {\"path\",\"xattrs\"} object per file per line,\n"
 		"                  values always printable-binary (the format load reads)\n"
-		"  --quiet         suppress warnings (e.g. values over 4096 bytes)\n"
+		"  --quiet         suppress warnings (e.g. values over 3916 bytes)\n"
 		"  --root <dir>    load: resolve relative dump paths against <dir>\n"
 		"  --allow-unsafe-paths  load: accept absolute paths and .. components\n"
 
@@ -182,8 +182,9 @@ static void usage(FILE *out) {
 		"leading/trailing space or trailing dot, not $..., com.apple..., Zone.Identifier,\n"
 		"and not starting with user. (Linux stores every name as user.<name> itself;\n"
 		"macOS and Windows NTFS streams store it verbatim).\n"
-		"Values over 4096 bytes draw a warning: ext4 without ea_inode fits about one\n"
-		"4 KiB block of attributes per file.\n"
+		"Values over 3916 bytes draw a warning: ext4 without ea_inode keeps all of a\n"
+		"file's attributes in one 4 KiB block, which holds 3916 bytes of value next to\n"
+		"the longest valid name.\n"
 		"\n"
 		"Exit codes: 0 ok, 1 error, 2 usage, 3 unsupported fs, 4 missing, 5 permission,\n"
 		"6 too large, 7 path not found, 8 invalid name/path.\n",

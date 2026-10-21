@@ -27,10 +27,11 @@ pub const XS_INVALID_ARGUMENT: c_int = 13;
 /// Mirrors XS_DEFAULT_MAX_VALUE_LEN in the header.
 pub const XS_DEFAULT_MAX_VALUE_LEN: usize = xs.default_max_value_len;
 
-/// Values up to this size fit every mainstream filesystem's default
-/// configuration (ext4 without ea_inode holds about one 4 KiB block of
-/// attributes per inode). Advisory; the CLI warns above it.
-pub const XS_PORTABLE_VALUE_LEN: usize = 4096;
+/// Largest value that fits on ext4 without ea_inode next to the longest valid
+/// name, as a file's only attribute: one 4 KiB block minus header (32), end
+/// marker (4), entry (16) and the 127-byte name padded to 128. See the header
+/// for the measured points. Advisory; the CLI warns above it.
+pub const XS_PORTABLE_VALUE_LEN: usize = 4096 - 32 - 4 - 16 - 128;
 
 // Name rejection reasons, mirrored by `enum xs_name_rejection` in the header.
 pub const XS_NAME_OK: c_int = 0;

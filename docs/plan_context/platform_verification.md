@@ -52,8 +52,39 @@ from wrong attribute data:
 - Listings end lines with CRLF because stdout is in text mode. Making all
   text output LF would match Linux and macOS and keep dumps portable.
 
+## Signed macOS bundles (2026-10-21)
+
+On the macOS 26 host, in a temporary directory: a self-signed code-signing
+identity in a temporary keychain file (the login keychain was untouched and
+the search list restored), and test bundles built from a copy of
+`/usr/bin/true`. Both were deleted afterward.
+
+- Custom attributes added after signing, on the bundle directory, the
+  executable and Info.plist, including a binary value, leave
+  `codesign --verify --deep --strict` valid.
+- Attributes present before signing are preserved by `codesign`, and the
+  signature verifies.
+- Removing an attribute keeps the signature valid, and the signed executable
+  runs with an attribute on it.
+- Only `com.apple.*` attributes such as FinderInfo count as signing
+  "detritus"; the logical name grammar already refuses that namespace.
+
+## ext4 single-block budget (2026-10-21)
+
+Measured with `setfattr` on a GitHub ARM Linux runner (ext4, 4 KiB blocks,
+256-byte inodes, no `ea_inode`): the largest value accepted as a file's only
+attribute was 4040 bytes for `user.k` and `user.kk`, and 4008 bytes for a
+36-character name. Both match `4044 - round_up4(name length)`. The portable
+limit is therefore 3916 bytes, not 4096: a 4096-byte value fails with
+ENOSPC, which the library reports as `XS_TOO_LARGE`.
+
+## Windows ARM toolchain
+
+Zig 0.16.0's aarch64-windows build crashes with an access violation
+(0xC0000005) during `zig build`, before compiling project code; `zig version`
+works. The ARM job therefore runs test executables cross-compiled on the x64
+runner.
+
 ## Not run
 
-- aarch64-linux and aarch64-windows: no such host was online.
-- Signed macOS app bundles: needs a throwaway signing identity, which the
-  standing host access does not cover.
+- The Bash CLI suite on Windows (needs porting).

@@ -202,12 +202,17 @@ the smallest OS ceiling across targets (Linux's kernel limit,
 all of them. macOS and NTFS allow far more; raise the bound per call only
 when you knowingly target those alone. Larger writes are refused and larger
 reads fail before allocating. Some Linux filesystems stop well below the
-kernel ceiling: ext4 without the `ea_inode` feature keeps all of an inode's
-attributes in roughly one 4 KiB block, btrfs allows about 16 KiB per value.
+kernel ceiling: ext4 without the `ea_inode` feature keeps all of a file's
+attributes in one 4 KiB block, and btrfs allows about 16 KiB per value.
 `limits` reports only the kernel figure, and a refused write surfaces as
-`XS_TOO_LARGE`. The header exports `XS_PORTABLE_VALUE_LEN` (4096) as the
-size that fits everywhere by default, and the CLI warns on stderr when a
-value exceeds it (`--quiet` silences the warning). A value that grows between
+`XS_TOO_LARGE`. An ext4 block holds a 32-byte header, a 4-byte end marker,
+and per attribute a 16-byte entry plus the name padded to 4 bytes, so a
+file's only attribute can hold `4044 - round_up4(name length)` bytes. On
+ext4 that measured 4040 bytes for a 1-byte name and 4008 for a 36-byte one.
+The header exports `XS_PORTABLE_VALUE_LEN` (3916), the value budget next to
+the longest valid name. Several attributes on one file share the block. The
+CLI warns on stderr when a value exceeds 3916 bytes (`--quiet` silences the
+warning). A value that grows between
 the size query and the read is retried up to four times, then reported as
 `XS_CHANGED`; a value that shrinks is returned at its actual length.
 
@@ -307,7 +312,10 @@ reports.
 ## Platform verification
 
 Cross-compiling proves the code builds for a target, not that it runs
-there. Native runs as of 2026-10-14 (details in
+there. Mechatron Prime CI builds all five targets but can only run tests
+on x86_64 Linux, inside the Nix sandbox. The GitHub Actions workflow in
+`.github/workflows/native.yml` reruns the suites natively on macOS ARM,
+Linux ARM and both Windows architectures on every push. Results (details in
 docs/plan_context/platform_verification.md):
 
 | Target | Compiles | Zig tests (real attribute I/O) | CLI suite | Consumers |
@@ -315,8 +323,8 @@ docs/plan_context/platform_verification.md):
 | x86_64-linux (ZFS) | yes | 97/97 | 303/303 | C, Rust, LuaJIT, Zig, pkg-config |
 | aarch64-macos 26 (APFS) | yes | 97/97 | 286 pass, 1 n/a | C, Rust, LuaJIT, Zig, pkg-config |
 | x86_64-windows 10 (NTFS) | yes | 99/99 (concurrency test green in 40 of 40 runs) | not yet ported to Windows | not run |
-| aarch64-linux | yes | not run | not run | not run |
-| aarch64-windows | yes | not run | not run | not run |
+| aarch64-linux (ext4) | yes | per push, GitHub Actions | per push | per push |
+| aarch64-windows | yes | per push, cross-compiled test executables run natively (Zig 0.16.0's own ARM64 Windows compiler crashes) | not yet ported | not run |
 
 Sandboxed Nix checks cannot exercise attribute I/O at all: Nix's build
 sandbox installs a seccomp rule that makes `setxattr` fail with ENOTSUP,

@@ -22,7 +22,7 @@ Newline-delimited JSON, one object per file, streamed in walk order:
 
 The file keeps its real bytes. A prefix or a sidecar attribute would change
 what other programs read (macOS quarantine, Wine security descriptors), write
-to user files, and spend ext4's ~4 KiB per-inode budget.
+to user files, and spend ext4's single 4 KiB attribute block per file.
 
 ## Load
 

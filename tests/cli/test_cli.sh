@@ -204,17 +204,19 @@ assert_rc 8
 out=""; err=""; rc=0; capture "$BIN" --raw put "$f" "$(native_name rawok)" <<<"v"
 assert_rc 0
 
-current="portability warning above 4096 bytes"
+current="portability warning above 3916 bytes"
+# 3916 is the largest value one 4 KiB ext4 attribute block holds next to the
+# longest valid name (4044 - 128); measured on ext4 as 4044 - round_up4(len).
 f="$(new_file f5c)"
-head -c 4096 /dev/zero >"$tmpdir/exact4k"
-head -c 4097 /dev/zero >"$tmpdir/over4k"
+head -c 3916 /dev/zero >"$tmpdir/exact4k"
+head -c 3917 /dev/zero >"$tmpdir/over4k"
 out=""; err=""; rc=0; capture "$BIN" put "$f" k <"$tmpdir/exact4k"
 assert_rc 0
 assert_err_empty
 out=""; err=""; rc=0; capture "$BIN" put "$f" k <"$tmpdir/over4k"
 assert_rc 0
 assert_err_has "warning"
-assert_err_has "4096"
+assert_err_has "3916"
 out=""; err=""; rc=0; capture "$BIN" --quiet put "$f" k <"$tmpdir/over4k"
 assert_rc 0
 assert_err_empty
@@ -222,7 +224,7 @@ out=""; err=""; rc=0; capture "$BIN" --json put "$f" k <"$tmpdir/over4k"
 assert_rc 0
 [[ "$err" =~ ^\{\"warning\": ]] && pass || fail "json warning: '$err'"
 out=""; err=""; rc=0; capture "$BIN" len "$f" k
-assert_out "4097"
+assert_out "3917"
 
 current="recursive listing"
 tree="$tmpdir/tree"
