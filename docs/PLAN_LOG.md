@@ -47,3 +47,4 @@ Completed PLAN.md items retired by plan-retire, oldest retirement first.
 - [x] [Active (2026-10-01)] `load` restores a JSON dump byte-exact (metamorphic dump-load-dump test); refuses absolute and `..` paths unless `--allow-unsafe-paths`; `--root`; parser and guards in src/dump.zig behind the C ABI (done 2026-10-01 17:45 EDT)
 - [x] [Recently done] Encoding detection via uchardetz dropped: printable-binary covers every value losslessly (decided 2026-09-30, closed 2026-10-14 14:40 EDT)
 - [x] [Recently done] Private names and machine details removed from current tracked prose (done 2026-10-14 14:40 EDT)
+- [x] [Recently done] Native macOS arm64 run: fixed non-UTF-8 fixture assumption, Rust dylib link, deployment-target warnings; Windows x64 Zig tests run, walk fakes fixed (done 2026-10-14 15:00 EDT)
