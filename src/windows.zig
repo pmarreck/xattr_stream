@@ -34,13 +34,23 @@ extern "kernel32" fn GetLastError() callconv(.winapi) DWORD;
 extern "kernel32" fn FindFirstStreamW(lpFileName: LPCWSTR, InfoLevel: c_int, lpFindStreamData: *WIN32_FIND_STREAM_DATA, dwFlags: DWORD) callconv(.winapi) HANDLE;
 extern "kernel32" fn FindNextStreamW(hFindStream: HANDLE, lpFindStreamData: *WIN32_FIND_STREAM_DATA) callconv(.winapi) BOOL;
 extern "kernel32" fn FindClose(hFindFile: HANDLE) callconv(.winapi) BOOL;
+extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.winapi) void;
 
 const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(std.math.maxInt(usize));
 const INVALID_FILE_ATTRIBUTES: DWORD = 0xFFFFFFFF;
 const GENERIC_READ: DWORD = 0x80000000;
 const GENERIC_WRITE: DWORD = 0x40000000;
 const FILE_READ_ATTRIBUTES: DWORD = 0x0080;
+const FILE_SHARE_READ: DWORD = 0x1;
 const FILE_SHARE_ALL: DWORD = 0x1 | 0x2 | 0x4;
+/// Writers take a stream exclusively and readers deny writers, so a reader
+/// never sees a stream between CREATE_ALWAYS's truncation and the last byte
+/// written. Attribute-only opens (size) are not subject to sharing.
+const SHARE_WRITER: DWORD = 0;
+const SHARE_READER: DWORD = FILE_SHARE_READ;
+/// Bounded wait for a stream another handle holds: up to about 2 s.
+const sharing_retries = 200;
+const sharing_backoff_ms: DWORD = 10;
 const CREATE_ALWAYS: DWORD = 2;
 const OPEN_EXISTING: DWORD = 3;
 const FILE_ATTRIBUTE_NORMAL: DWORD = 0x80;
@@ -53,6 +63,7 @@ const ERROR_PATH_NOT_FOUND: DWORD = 3;
 const ERROR_ACCESS_DENIED: DWORD = 5;
 const ERROR_NOT_ENOUGH_MEMORY: DWORD = 8;
 const ERROR_WRITE_PROTECT: DWORD = 19;
+const ERROR_SHARING_VIOLATION: DWORD = 32;
 const ERROR_HANDLE_EOF: DWORD = 38;
 const ERROR_HANDLE_DISK_FULL: DWORD = 39;
 const ERROR_NOT_SUPPORTED: DWORD = 50;
@@ -112,15 +123,23 @@ fn requireBase(path: [*:0]const u8) Error!void {
 	if (GetFileAttributesW(wp.ptr) == INVALID_FILE_ATTRIBUTES) return mapWin(GetLastError(), .path);
 }
 
-fn openStream(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool, access: DWORD, disposition: DWORD) Error!HANDLE {
+/// Opens `path:name`. A sharing violation means another reader or writer
+/// holds the stream right now, so the open is retried with a short backoff
+/// (bounded; the last error is reported if it never frees up).
+fn openStream(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool, access: DWORD, share: DWORD, disposition: DWORD) Error!HANDLE {
 	try requireBase(path);
 	var wbuf: WPath = undefined;
 	const ws = try streamPath(path, name, &wbuf);
 	var flags: DWORD = FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS;
 	if (nofollow) flags |= FILE_FLAG_OPEN_REPARSE_POINT;
-	const h = CreateFileW(ws.ptr, access, FILE_SHARE_ALL, null, disposition, flags, null);
-	if (h == INVALID_HANDLE_VALUE) return mapWin(GetLastError(), .attr);
-	return h;
+	var attempt: usize = 0;
+	while (true) : (attempt += 1) {
+		const h = CreateFileW(ws.ptr, access, share, null, disposition, flags, null);
+		if (h != INVALID_HANDLE_VALUE) return h;
+		const code = GetLastError();
+		if (code != ERROR_SHARING_VIOLATION or attempt + 1 >= sharing_retries) return mapWin(code, .attr);
+		Sleep(if (attempt == 0) 0 else sharing_backoff_ms);
+	}
 }
 
 fn handleSize(h: HANDLE) Error!usize {
@@ -130,13 +149,13 @@ fn handleSize(h: HANDLE) Error!usize {
 }
 
 pub fn size(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool) Error!usize {
-	const h = try openStream(path, name, nofollow, FILE_READ_ATTRIBUTES, OPEN_EXISTING);
+	const h = try openStream(path, name, nofollow, FILE_READ_ATTRIBUTES, FILE_SHARE_ALL, OPEN_EXISTING);
 	defer _ = CloseHandle(h);
 	return handleSize(h);
 }
 
 pub fn read(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool, buf: []u8) Error!usize {
-	const h = try openStream(path, name, nofollow, GENERIC_READ, OPEN_EXISTING);
+	const h = try openStream(path, name, nofollow, GENERIC_READ, SHARE_READER, OPEN_EXISTING);
 	defer _ = CloseHandle(h);
 	const expected = try handleSize(h);
 	if (expected > buf.len) return error.BufferTooSmall;
@@ -152,7 +171,7 @@ pub fn read(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool, buf: []u8)
 }
 
 pub fn write(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool, value: []const u8) Error!void {
-	const h = try openStream(path, name, nofollow, GENERIC_WRITE, CREATE_ALWAYS);
+	const h = try openStream(path, name, nofollow, GENERIC_WRITE, SHARE_WRITER, CREATE_ALWAYS);
 	defer _ = CloseHandle(h);
 	var total: usize = 0;
 	while (total < value.len) {
@@ -169,7 +188,12 @@ pub fn remove(path: [*:0]const u8, name: [*:0]const u8, nofollow: bool) Error!vo
 	try requireBase(path);
 	var wbuf: WPath = undefined;
 	const ws = try streamPath(path, name, &wbuf);
-	if (DeleteFileW(ws.ptr) == 0) return mapWin(GetLastError(), .attr);
+	var attempt: usize = 0;
+	while (DeleteFileW(ws.ptr) == 0) : (attempt += 1) {
+		const code = GetLastError();
+		if (code != ERROR_SHARING_VIOLATION or attempt + 1 >= sharing_retries) return mapWin(code, .attr);
+		Sleep(if (attempt == 0) 0 else sharing_backoff_ms);
+	}
 }
 
 /// `:name:$DATA` -> `name`; the unnamed data stream (`::$DATA`) and

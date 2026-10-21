@@ -33,12 +33,11 @@ x86_64-windows-gnu --test-no-exec` and run natively:
 - Core and FFI suites: 35/36 and 51/52. The walk tests failed at first
   because the fake directory tree compared paths with `/` while the walker
   joins with `\` on Windows; the fakes now treat both as separators.
-- Remaining failure: the concurrent writers-and-readers test sees a few
-  hundred partial values per run. Windows stream writes truncate and then
-  write, so a reader can open the stream in between. This is the documented
-  limit, now measured. Fix options to evaluate: write a temporary stream and
-  rename it over the target, or serialize readers and writers with share
-  modes and bounded retries.
+- The concurrent writers-and-readers test saw a few hundred partial values
+  per run: stream writes truncate and then write, so a reader could open
+  the stream in between. Fixed 2026-10-21 by serializing with share modes
+  (writers exclusive, readers share-read, bounded retry on sharing
+  violations). Both binaries then passed 20 runs each.
 - Zero-length streams and symlink resolution through `path:stream` pass.
 - `limits .` prints -1 (no portable query), as designed.
 

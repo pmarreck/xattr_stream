@@ -212,8 +212,13 @@ the size query and the read is retried up to four times, then reported as
 `XS_CHANGED`; a value that shrinks is returned at its actual length.
 
 Atomicity: POSIX replaces one attribute atomically. On Windows a stream
-write truncates then rewrites, so a concurrent reader can see a partial
-value. Nothing spans multiple files or multiple attributes.
+write truncates then rewrites, so the adapter serializes access with NTFS
+share modes: a writer holds the stream exclusively, a reader shares it only
+with other readers, and an open or delete that meets a sharing violation
+retries for up to about 2 s before reporting `XS_IO`. Readers therefore see
+the old value or the new one, never a partial write. A program outside this
+library that holds the stream open can still stall it. Nothing spans
+multiple files or multiple attributes.
 
 ## Symlinks, directories, rename
 
@@ -309,7 +314,7 @@ docs/plan_context/platform_verification.md):
 |---|---|---|---|---|
 | x86_64-linux (ZFS) | yes | 97/97 | 303/303 | C, Rust, LuaJIT, Zig, pkg-config |
 | aarch64-macos 26 (APFS) | yes | 97/97 | 286 pass, 1 n/a | C, Rust, LuaJIT, Zig, pkg-config |
-| x86_64-windows 10 (NTFS) | yes | 97/99: the one concurrency test, run in two binaries, sees partial values | not yet ported to Windows | not run |
+| x86_64-windows 10 (NTFS) | yes | 99/99 (concurrency test green in 40 of 40 runs) | not yet ported to Windows | not run |
 | aarch64-linux | yes | not run | not run | not run |
 | aarch64-windows | yes | not run | not run | not run |
 

@@ -27,7 +27,9 @@ Rewrite in Zig 0.16; reasoning in README "Why Zig". Layout:
 
 - Nix sandbox seccomp returns ENOTSUP for setxattr, so sandboxed checks skip
   attribute I/O; `./test` in the dev shell is the runtime oracle.
-- Windows stream writes are truncate-then-write, not atomic for readers.
+- Windows stream writes are truncate-then-write; share modes keep readers
+  from seeing a partial value, but a foreign program holding the stream
+  open can stall an operation for up to about 2 s.
 - No cross-file or cross-attribute atomicity; values are buffered whole and
   bounded by `--limit` / `max_value_len`.
 
@@ -38,7 +40,7 @@ Rewrite in Zig 0.16; reasoning in README "Why Zig". Layout:
 - macOS: `_PC_XATTR_SIZE_BITS` (26) may return -1 on APFS; `limits` then
   prints -1 rather than probing (probing writes to the filesystem).
 - The concurrency test asserts whole values under 8 writers; it cannot
-  distinguish a torn read on Windows where writes are not atomic.
+  distinguish a torn read on Windows; since 2026-10-21 it runs natively there and passes.
 
 ## Blocked items (as of 2026-09-28 23:20 EDT)
 
