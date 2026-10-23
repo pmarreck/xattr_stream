@@ -2,7 +2,9 @@
   description = "xattr_stream: cross-platform binary-safe file attributes (Zig core, C ABI, C CLI)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # The 26.05 release branch: nixpkgs 26.11 (unstable) dropped
+    # x86_64-darwin, and macos-amd64 is a supported platform.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
     zig-overlay = {
       url = "github:mitchellh/zig-overlay";
@@ -189,6 +191,7 @@
               # Each diagnostic starts with a warning: or error: headline.
               local rest; rest=$(printf '%s\n' "$log" | grep -e '^warning' -e '^error' | grep -v -x -F \
                 -e 'warning: linker stderr: ignoring deprecated linker optimization setting "1"' \
+                -e "warning: linker stderr: ignoring deprecated linker optimization setting '1'" \
                 -e 'warning: invoking `"xcrun" "--sdk" "macosx" "--show-sdk-path"` to find MacOSX.sdk failed: No such file or directory (os error 2)' \
                 -e 'warning: `xattr_stream` (bin "xattr-stream-rs") generated 1 warning') || true
               if [ -n "$rest" ]; then printf 'unexpected diagnostics for %s:\n%s\n' "$1" "$log" >&2; return 1; fi
@@ -281,8 +284,9 @@
           # The Rust implementation for all six platforms: each CLI's actual
           # file header names its OS and architecture, every platform has its
           # static library, and the Linux CLIs run (arm64 under qemu-user)
-          # and report their own platform.
-          test-rust-cross = mkCheck "test-rust-cross" [ pkgs.file pkgs.qemu-user ] ''
+          # and report their own platform (Linux builders only; qemu-user
+          # exists only there).
+          test-rust-cross = mkCheck "test-rust-cross" ([ pkgs.file ] ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.qemu-user) (''
             check_header() {
               local f="$1" want="$2" got
               got=$(file -b "$f")
@@ -303,11 +307,16 @@
               test -s $r/$pf/release/lib/libxattr_stream.a || { echo "missing static lib for $pf" >&2; exit 1; }
               test -f $r/$pf/release/include/xattr_stream.h || { echo "missing header for $pf" >&2; exit 1; }
             done
-            about=$($r/linux-amd64/release/bin/xattr-stream-rs --about)
+          '' + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            run=""
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch64 ''run="qemu-x86_64"''}
+            about=$($run $r/linux-amd64/release/bin/xattr-stream-rs --about)
             case "$about" in *" for linux-amd64") ;; *) echo "linux-amd64 --about: $about" >&2; exit 1 ;; esac
-            about=$(qemu-aarch64 $r/linux-arm64/release/bin/xattr-stream-rs --about)
+            run=""
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isx86_64 ''run="qemu-aarch64"''}
+            about=$($run $r/linux-arm64/release/bin/xattr-stream-rs --about)
             case "$about" in *" for linux-arm64") ;; *) echo "linux-arm64 --about: $about" >&2; exit 1 ;; esac
-          '';
+          '');
 
           # Independent compilers/runtimes consuming the C ABI.
           test-consumer-c = mkCheck "test-consumer-c" [ pkgs.clang ] ''

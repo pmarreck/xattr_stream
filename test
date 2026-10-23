@@ -141,6 +141,14 @@ have() {
 	done
 }
 
+# Every system's outputs must still evaluate (a nixpkgs update once dropped
+# x86_64-darwin, which only the macOS Intel runner noticed).
+flake_eval() {
+	local log
+	log="$(nix flake check --all-systems --no-build 2>&1)" || { printf '%s\n' "$log" >&2; return 1; }
+}
+have nix && step "flake evaluates for all four Nix systems" flake_eval
+
 have clang && step "consumer: C (clang)" consumer_c
 have rustc && step "consumer: Rust" consumer_rust
 have luajit && step "consumer: LuaJIT" consumer_luajit

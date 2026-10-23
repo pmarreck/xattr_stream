@@ -6,7 +6,7 @@ limits and evidence: docs/plan_context/.
 ## Next
 
 - [ ] Adopt the build skill's multiple-implementation convention (`CANONICAL_IMPL`, `./build canonize`, `--all-impls`/`--all-plats`/`--all`, `<impl>-out/<PF>/[<VARIANT>/]<profile>/`, retiring `./build-all`) once BDFN confirms it is the fleet answer for naming executables of several implementations
-- [ ] Assess the sibling table renderer (tsv_to_ansi_table) as the listing-table dependency; report, do not adopt yet
+- [ ] Table rendering through tsv_to_ansi_table (awaiting BDFN's go-ahead for the new dependency). Its library form is published at b5806ccd775112165e785b1eaae0c2da0f72b90e: Zig module `tsv_to_ansi_table`, C ABI `include/tsv_to_ansi_table.h` (`tsvat_render`, streaming `tsvat_create/push_row/finish`), utf8proc as a declared Zig dependency, docs/libraries.md. Before adopting, confirm it builds for all six PFs (it reports four cross targets) and in our Nix sandbox
 - [ ] Assess using the printable_binary Rust crate instead of the embedded glyph table; tell its agent that build scripts must not reach outside their crate
 - [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) (context: docs/plan_context/platform_verification.md)
 
