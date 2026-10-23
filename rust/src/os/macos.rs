@@ -29,13 +29,13 @@ const EFBIG: i32 = 27;
 const ENOSPC: i32 = 28;
 const EROFS: i32 = 30;
 const ERANGE: i32 = 34;
-/// What getxattr(2) documents for a volume without attribute support.
+/// What getxattr(2) documents for a volume without attribute support (Zig
+/// calls it OPNOTSUPP; Darwin's EOPNOTSUPP, 102, is for sockets only).
 const ENOTSUP: i32 = 45;
 const ELOOP: i32 = 62;
 pub(crate) const ENAMETOOLONG: i32 = 63;
 const EDQUOT: i32 = 69;
 const ENOATTR: i32 = 93;
-const EOPNOTSUPP: i32 = 102;
 
 #[derive(PartialEq)]
 enum Ctx {
@@ -47,7 +47,7 @@ fn map_errno(e: i32, ctx: Ctx) -> Error {
 	set_last_os_error(e);
 	match e {
 		ENOATTR => Error::Missing,
-		ENOTSUP | EOPNOTSUPP => Error::Unsupported,
+		ENOTSUP => Error::Unsupported,
 		EROFS => Error::ReadOnly,
 		EACCES | EPERM => Error::Permission,
 		E2BIG | ENOSPC | EDQUOT | EFBIG => Error::TooLarge,

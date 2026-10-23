@@ -7,7 +7,6 @@ limits and evidence: docs/plan_context/.
 
 - [ ] Rust implementation: confirm the native CI runs (macOS ARM/Intel, Linux ARM/x64 through `./test`; Windows x64/ARM through `cargo test`)
 - [ ] Rust cross builds for all six platforms in `./build-all` (needs Rust standard libraries for the other targets in the flake, e.g. a rust-overlay toolchain)
-- [ ] macOS adapter (Zig): getxattr(2) documents ENOTSUP (45) for volumes without attributes, but src/darwin.zig maps only EOPNOTSUPP (102) to XS_UNSUPPORTED, so such a volume likely reports XS_IO; the Rust adapter maps both. Add an errno-mapping test, then fix
 - [ ] Zig walker: check how std.Io.Dir iteration reports entries on filesystems without d_type; if they come back as `.unknown`, directories would be listed but never entered (the Rust walker falls back to lstat)
 - [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) and decide LF-only text output (context: docs/plan_context/platform_verification.md)
 

@@ -91,7 +91,13 @@ build_tree() {
 	put() { "$REF" put "$1" "$2" <"$3" >/dev/null 2>&1 || { echo "differential: fixture setup failed: put $*" >&2; setup_failed=1; }; }
 	path() { paths+=("$1"); }
 	attr() { attrs+=("$1" "$2"); }
-	luajit "$GEN" tree "$SEED" "$tmp/vals" "$nonutf" >"$tmp/setup.bash" || return 1
+	# Values over 4 KiB only where the filesystem takes them (not ext4
+	# without ea_inode, where a file's attributes share one 4 KiB block).
+	local big=0
+	: >probe.big
+	head -c 8000 /dev/zero | "$REF" put probe.big probe >/dev/null 2>&1 && big=1
+	rm -f probe.big
+	luajit "$GEN" tree "$SEED" "$tmp/vals" "$nonutf" "$big" >"$tmp/setup.bash" || return 1
 	# shellcheck disable=SC1091 # generated script
 	source "$tmp/setup.bash"
 	[[ $setup_failed -eq 0 && ${#paths[@]} -gt 0 ]]

@@ -35,6 +35,15 @@ fn mapErrno(e: c.E, ctx: Ctx) Error {
 	};
 }
 
+test "mapErrno: ENOTSUP (45), what getxattr(2) returns without attribute support, is Unsupported" {
+	// Zig names errno 45 OPNOTSUPP; Darwin's EOPNOTSUPP is 102, sockets only.
+	try std.testing.expectEqual(@as(u16, 45), @intFromEnum(c.E.OPNOTSUPP));
+	try std.testing.expectEqual(error.Unsupported, mapErrno(@enumFromInt(45), .generic));
+	try std.testing.expectEqual(error.Missing, mapErrno(.NOATTR, .generic));
+	try std.testing.expectEqual(error.BufferTooSmall, mapErrno(.RANGE, .read));
+	try std.testing.expectEqual(error.TooLarge, mapErrno(.RANGE, .generic));
+}
+
 fn errnoNow() c.E {
 	return @enumFromInt(c._errno().*);
 }

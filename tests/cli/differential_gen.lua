@@ -1,8 +1,11 @@
 -- Seeded fixture and case generator for tests/cli/differential.sh.
---   luajit differential_gen.lua tree <seed> <valsdir> <nonutf:0|1>
+--   luajit differential_gen.lua tree <seed> <valsdir> <nonutf:0|1> <big:0|1>
 --   luajit differential_gen.lua fuzz <seed> <count>
 -- `tree` prints a Bash script (setup commands, then `path`/`attr`
--- registrations) and writes attribute values into <valsdir>. `fuzz` prints
+-- registrations) and writes attribute values into <valsdir>. With big=0
+-- (ext4 without ea_inode: all of a file's attributes share one 4 KiB block)
+-- each file's attributes stay within that block; with big=1 some values
+-- exceed 4 KiB, which exercises the size-query read path. `fuzz` prints
 -- dump lines, valid ones and seeded corruptions of them, for `load`.
 -- Deterministic for a seed: xorshift32, not math.random, so every LuaJIT
 -- build produces the same fixture.
@@ -26,7 +29,12 @@ local function q(s)
 end
 
 if mode == "tree" then
-	local valsdir, nonutf = arg[3], arg[4] == "1"
+	local valsdir, nonutf, big = arg[3], arg[4] == "1", arg[5] == "1"
+	-- Bytes per file the attributes may take on a one-block filesystem:
+	-- entry header plus padded name ("user." included) and value, under the
+	-- measured 4040-byte budget.
+	local block_budget = 3900
+	local function cost(n, v) return 16 + 4 * math.ceil((#n + 5) / 4) + 4 * math.ceil(#v / 4) end
 	local file_names = { "a", "b c", "dir with space", "ünï", "pipe|bar", "comma,name", 'quote"q', "x.y", "tab-less", "z", "ctl\31char" }
 	if nonutf then file_names[#file_names + 1] = "caf\xe9" end
 	-- Valid logical names only: the fixture is built through the CLI itself.
@@ -43,20 +51,24 @@ if mode == "tree" then
 			for _ = 1, rnd(48) do out[#out + 1] = string.char(rnd(256) - 1) end
 		elseif kind == 9 then -- multi-line text
 			for _ = 1, rnd(4) do out[#out + 1] = "line " .. rnd(99) .. "\n" end
-		else -- longer than the 4 KiB optimistic read and the 3916 portability bound
+		elseif big then -- longer than the 4 KiB optimistic read
 			for _ = 1, 4000 + rnd(200) do out[#out + 1] = string.char(rnd(256) - 1) end
+		else
+			for _ = 1, 2500 + rnd(500) do out[#out + 1] = string.char(rnd(256) - 1) end
 		end
 		return table.concat(out)
 	end
 	local function attrs(rel)
-		local used = {}
+		local used, spent = {}, 0
 		for _ = 1, rnd(5) - 1 do
 			local n = pick(attr_names)
-			if not used[n] then
+			local v = value()
+			if not used[n] and (big or spent + cost(n, v) <= block_budget) then
 				used[n] = true
+				spent = spent + cost(n, v)
 				nval = nval + 1
 				local f = assert(io.open(valsdir .. "/" .. nval, "wb"))
-				f:write(value())
+				f:write(v)
 				f:close()
 				print("put " .. q(rel) .. " " .. q(n) .. " " .. q(valsdir .. "/" .. nval))
 				print("attr " .. q(rel) .. " " .. q(n))
