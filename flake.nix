@@ -8,9 +8,15 @@
       url = "github:mitchellh/zig-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # A Rust toolchain with the standard libraries of all six platforms, for
+    # cross-compiling the Rust implementation (nixpkgs' Rust has the host's only).
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, zig-overlay }:
+  outputs = { self, nixpkgs, flake-utils, zig-overlay, rust-overlay }:
     {
       # For other flakes: add `xattr_stream.overlays.default` to nixpkgs
       # overlays, then use `pkgs.xattr_stream` (bin/, lib/, include/, and
@@ -61,7 +67,7 @@
           mkdir -p $ZIG_GLOBAL_CACHE_DIR
           cp -r ${zigDeps}/. $ZIG_GLOBAL_CACHE_DIR/
           chmod -R u+w $ZIG_GLOBAL_CACHE_DIR
-          ${pkgs.lib.optionalString pkgs.stdenv.isDarwin "unset NIX_CFLAGS_COMPILE NIX_LDFLAGS"}
+          ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "unset NIX_CFLAGS_COMPILE NIX_LDFLAGS"}
         '';
 
         mkCheck = name: extraInputs: script: pkgs.stdenv.mkDerivation {
@@ -141,11 +147,74 @@
           '';
           dontInstall = true;
         };
+
+        # The Rust implementation for every platform (PF), cross-compiled from
+        # this host. Zig is the C compiler and linker for every target, through
+        # cargo-zigbuild, so no per-target C toolchain or SDK is needed.
+        rustTargets = {
+          linux-amd64 = "x86_64-unknown-linux-musl";
+          linux-arm64 = "aarch64-unknown-linux-musl";
+          macos-amd64 = "x86_64-apple-darwin";
+          macos-arm64 = "aarch64-apple-darwin";
+          mswin-amd64 = "x86_64-pc-windows-gnu";
+          mswin-arm64 = "aarch64-pc-windows-gnullvm";
+        };
+        rustCrossToolchain = rust-overlay.packages.${system}.rust.override {
+          targets = builtins.attrValues rustTargets;
+        };
+        rustCross = pkgs.stdenv.mkDerivation {
+          pname = "xattr_stream-rs-cross";
+          inherit version src;
+          nativeBuildInputs = [ rustCrossToolchain pkgs.cargo-zigbuild zig ];
+          dontConfigure = true;
+          dontFixup = true;
+          buildPhase = ''
+            export HOME=$TMPDIR CARGO_HOME=$TMPDIR/cargo
+            export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-global ZIG_LOCAL_CACHE_DIR=$TMPDIR/zig-local
+            ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "unset NIX_CFLAGS_COMPILE NIX_LDFLAGS"}
+            cd rust
+            # Cross builds ship the CLI and the static library; the Zig cross
+            # step already provides shared libraries for every platform. Cargo
+            # builds all of a library's crate types whenever the binary needs
+            # it, and cdylib cannot link for musl or (through Zig) macOS, so
+            # this copy drops it.
+            substituteInPlace Cargo.toml --replace-fail \
+              'crate-type = ["rlib", "staticlib", "cdylib"]' 'crate-type = ["rlib", "staticlib"]'
+            # Any diagnostic fails the build, except two known notices: Zig
+            # ignoring rustc's -Wl,-O1, and cargo-zigbuild not finding xcrun
+            # (Zig links macOS against its own libSystem stubs).
+            build_quietly() {
+              local log; log=$(cargo zigbuild --offline --frozen --release --quiet --color never --target "$1" 2>&1) || {
+                printf '%s\n' "$log" >&2; return 1; }
+              # Each diagnostic starts with a warning: or error: headline.
+              local rest; rest=$(printf '%s\n' "$log" | grep -e '^warning' -e '^error' | grep -v -x -F \
+                -e 'warning: linker stderr: ignoring deprecated linker optimization setting "1"' \
+                -e 'warning: invoking `"xcrun" "--sdk" "macosx" "--show-sdk-path"` to find MacOSX.sdk failed: No such file or directory (os error 2)' \
+                -e 'warning: `xattr_stream` (bin "xattr-stream-rs") generated 1 warning') || true
+              if [ -n "$rest" ]; then printf 'unexpected diagnostics for %s:\n%s\n' "$1" "$log" >&2; return 1; fi
+            }
+            ${pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (pf: triple: ''
+              build_quietly ${triple}
+            '') rustTargets)}
+          '';
+          installPhase = ''
+            ${pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (pf: triple: ''
+              mkdir -p $out/${pf}/release/bin $out/${pf}/release/lib $out/${pf}/release/include
+              for f in xattr-stream-rs xattr-stream-rs.exe libxattr_stream.a xattr_stream.lib libxattr_stream.so libxattr_stream.dylib xattr_stream.dll; do
+                p=target/${triple}/release/$f
+                test -f "$p" || continue
+                case "$f" in xattr-stream-rs*) cp "$p" $out/${pf}/release/bin/ ;; *) cp "$p" $out/${pf}/release/lib/ ;; esac
+              done
+              cp ../include/xattr_stream.h $out/${pf}/release/include/
+            '') rustTargets)}
+          '';
+        };
       in
       {
         packages = {
           default = native;
           inherit native cross rust;
+          rust-cross = rustCross;
         };
 
         checks = {
@@ -207,6 +276,37 @@
             must_fail consumer-zig sh -c 'cd tests/consumers/zig && zig build test'
             export CARGO_HOME=$TMPDIR/cargo CARGO_TARGET_DIR=$TMPDIR/cargo-target
             must_fail rust-tests cargo test --offline --release --manifest-path rust/Cargo.toml
+          '';
+
+          # The Rust implementation for all six platforms: each CLI's actual
+          # file header names its OS and architecture, every platform has its
+          # static library, and the Linux CLIs run (arm64 under qemu-user)
+          # and report their own platform.
+          test-rust-cross = mkCheck "test-rust-cross" [ pkgs.file pkgs.qemu-user ] ''
+            check_header() {
+              local f="$1" want="$2" got
+              got=$(file -b "$f")
+              case "$got" in *"$want"*) ;; *) echo "$f: expected '$want', file says '$got'" >&2; exit 1 ;; esac
+            }
+            r=${rustCross}
+            check_header $r/linux-amd64/release/bin/xattr-stream-rs "ELF 64-bit LSB executable, x86-64"
+            check_header $r/linux-amd64/release/bin/xattr-stream-rs "statically linked"
+            check_header $r/linux-arm64/release/bin/xattr-stream-rs "ELF 64-bit LSB executable, ARM aarch64"
+            check_header $r/linux-arm64/release/bin/xattr-stream-rs "statically linked"
+            check_header $r/macos-amd64/release/bin/xattr-stream-rs "Mach-O 64-bit x86_64 executable"
+            check_header $r/macos-arm64/release/bin/xattr-stream-rs "Mach-O 64-bit arm64 executable"
+            check_header $r/mswin-amd64/release/bin/xattr-stream-rs.exe "PE32+ executable"
+            check_header $r/mswin-amd64/release/bin/xattr-stream-rs.exe "(console), x86-64"
+            check_header $r/mswin-arm64/release/bin/xattr-stream-rs.exe "PE32+ executable"
+            check_header $r/mswin-arm64/release/bin/xattr-stream-rs.exe "(console), ARM64"
+            for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64; do
+              test -s $r/$pf/release/lib/libxattr_stream.a || { echo "missing static lib for $pf" >&2; exit 1; }
+              test -f $r/$pf/release/include/xattr_stream.h || { echo "missing header for $pf" >&2; exit 1; }
+            done
+            about=$($r/linux-amd64/release/bin/xattr-stream-rs --about)
+            case "$about" in *" for linux-amd64") ;; *) echo "linux-amd64 --about: $about" >&2; exit 1 ;; esac
+            about=$(qemu-aarch64 $r/linux-arm64/release/bin/xattr-stream-rs --about)
+            case "$about" in *" for linux-arm64") ;; *) echo "linux-arm64 --about: $about" >&2; exit 1 ;; esac
           '';
 
           # Independent compilers/runtimes consuming the C ABI.

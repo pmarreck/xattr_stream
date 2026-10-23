@@ -354,7 +354,7 @@ binary copied alongside it.
 
 ```sh
 ./build        # host platform, ReleaseFast via nix build; bin/<PF>/xattr-stream
-./build-all    # all six platforms, cross-compiled; bin/<PF>/ for each
+./build-all    # both implementations for all six platforms; bin/<PF>/ for each
 ./test         # Zig tests, CLI suite, C/Rust/LuaJIT/Zig consumers, pkg-config consumer
 nix flake check
 ```
@@ -365,6 +365,18 @@ the dev shell into `zig-out/<PF>/<profile>/`. Product trees (`bin/`, `lib/`,
 and `.nix-out/cross/<PF>/ReleaseFast`, and `bin/<PF>/` holds only links to
 them. Without Nix: `zig build --prefix zig-out/<PF>/ReleaseFast`, `zig build
 test`, and `zig build cross --prefix <dir>`.
+
+The Rust implementation is cross-compiled by `nix build .#rust-cross` into
+`.nix-out/rust-cross/<PF>/release/` (CLI, static library, header). It uses a
+rust-overlay toolchain with the six standard libraries and Zig as the C
+compiler and linker through cargo-zigbuild, so no per-platform SDK is
+needed. Linux targets are static musl; Windows targets are `windows-gnu`
+(`gnullvm` on ARM). Shared libraries for other platforms come from the Zig
+cross build; the Rust copy builds rlib and staticlib only, because cdylib
+cannot link for static musl or for macOS through Zig. The build fails on any
+compiler or linker diagnostic except two known notices, and the check
+`test-rust-cross` verifies each CLI's file header and runs both Linux CLIs,
+arm64 under qemu-user.
 
 Dependencies are declared in two places that must agree: `build.zig.zon`
 pins `printable_binary` by URL and content hash for Zig, and `flake.nix`

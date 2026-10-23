@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Cross-compiles the library and CLI for all six platforms (PF, <OS>-<ARCH>):
-#   linux-amd64, linux-arm64 (static musl CLI), macos-amd64, macos-arm64,
+# Cross-compiles both implementations for all six platforms (PF, <OS>-<ARCH>):
+#   linux-amd64, linux-arm64 (static musl CLIs), macos-amd64, macos-arm64,
 #   mswin-amd64, mswin-arm64
-# The product trees land in .nix-out/cross/<PF>/ReleaseFast/{bin,lib}, and
-# each platform's command is linked into bin/<PF>/, except the host's, which
-# ./build owns. Cross-compiling proves the code builds for a platform; it
-# does not prove it runs there (see README).
-# Without Nix: zig build cross --prefix <dir>
+# Product trees:
+#   Zig library and C CLI   .nix-out/cross/<PF>/ReleaseFast/{bin,lib}
+#   Rust CLI and static lib .nix-out/rust-cross/<PF>/release/{bin,lib,include}
+# Each platform's commands (xattr-stream, xattr-stream-rs) are linked into
+# bin/<PF>/, except the host's, which ./build owns. Cross-compiling proves
+# the code builds for a platform; it does not prove it runs there (see
+# README).
+# Without Nix: zig build cross --prefix <dir>, and for Rust a toolchain with
+# the six targets plus cargo-zigbuild (see packages.rust-cross in flake.nix).
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,23 +21,29 @@ source "$ROOT/scripts/pf.bash"
 host="$(host_pf)" || host=""
 mkdir -p .nix-out
 nix build .#cross -o .nix-out/cross || exit 1
+nix build .#rust-cross -o .nix-out/rust-cross || exit 1
 
 status=0
-for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64; do
-	exe=""
+# publish PF PRODUCT_BIN_DIR COMMAND
+publish() {
+	local pf="$1" dir="$2" cmd="$3" exe=""
 	[[ "$pf" == mswin-* ]] && exe=".exe"
-	product=".nix-out/cross/$pf/ReleaseFast"
-	if [[ ! -f "$product/bin/xattr-stream$exe" ]]; then
-		echo "build-all: missing $product/bin/xattr-stream$exe" >&2
+	if [[ ! -f "$dir/$cmd$exe" ]]; then
+		echo "build-all: missing $dir/$cmd$exe" >&2
 		status=1
-		continue
+		return
 	fi
 	if [[ "$pf" == "$host" ]]; then
-		echo "kept:  bin/$pf/ (host; ./build publishes it)"
-		continue
+		echo "kept:  bin/$pf/$cmd$exe (host; ./build publishes it)"
+		return
 	fi
 	mkdir -p "bin/$pf"
-	ln -sfn "../../$product/bin/xattr-stream$exe" "bin/$pf/xattr-stream$exe" || status=1
-	echo "built: bin/$pf/xattr-stream$exe -> $product/bin/xattr-stream$exe"
+	ln -sfn "../../$dir/$cmd$exe" "bin/$pf/$cmd$exe" || status=1
+	echo "built: bin/$pf/$cmd$exe -> $dir/$cmd$exe"
+}
+
+for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64; do
+	publish "$pf" ".nix-out/cross/$pf/ReleaseFast/bin" xattr-stream
+	publish "$pf" ".nix-out/rust-cross/$pf/release/bin" xattr-stream-rs
 done
 exit "$status"
