@@ -25,6 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
+      # Ubuntu 24.04's AppArmor policy denies unprivileged user namespaces
+      # their capabilities, so Bubblewrap (scripts/run-isolated, which
+      # confines the build-script tests) cannot start and ./test fails.
+      - name: Allow unprivileged user namespaces
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Full suite in the dev shell
         run: nix develop -c ./test
 

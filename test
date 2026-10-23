@@ -211,6 +211,10 @@ if [[ "$(uname -s)" == Linux ]]; then
 			step "build script: selection, scopes, publication (confined)" build_script_confined
 		else
 			printf '\033[31mFAIL\033[0m build script tests not run: the isolation boundary failed\n' >&2
+			# Ubuntu 24.04 and later deny unprivileged user namespaces by default.
+			if [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" == 1 ]]; then
+				printf '  AppArmor restricts unprivileged user namespaces here; allow them with\n  sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n' >&2
+			fi
 			failures=$((failures + 1))
 		fi
 	fi
