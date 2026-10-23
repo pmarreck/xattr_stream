@@ -1,5 +1,9 @@
 # TERMINOLOGY
 
+- **PF (platform name)**: `<OS>-<ARCH>`, with OS `linux`, `macos` or `mswin`
+  and ARCH `amd64` (x86-64) or `arm64` (AArch64); six platforms in all.
+  Used for `xs_target()`, `--about`, output directories and `bin/<PF>/`.
+  Compiler triples and Nix system names keep their own spellings.
 - **attribute**: a named sequence of bytes attached to a file or directory,
   separate from its contents. Called an extended attribute (xattr) on Linux
   and macOS; realized as an NTFS alternate data stream on Windows.

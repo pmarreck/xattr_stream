@@ -122,18 +122,18 @@
             bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
           '';
 
-          # Cross-compilation must succeed for all five targets even though only
-          # the host can run them.
+          # Cross-compilation must succeed for all six platforms (PF,
+          # <OS>-<ARCH>) even though only the host can run them.
           test-cross = mkCheck "test-cross" [ ] ''
-            zig build cross
-            for t in x86_64-linux-musl aarch64-linux-musl aarch64-macos; do
-              test -f zig-out/cross/$t/bin/xattr-stream || { echo "missing CLI for $t" >&2; exit 1; }
-              test -f zig-out/cross/$t/lib/libxattr_stream.a || { echo "missing static lib for $t" >&2; exit 1; }
+            zig build cross --prefix out
+            for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64; do
+              test -f out/$pf/ReleaseFast/bin/xattr-stream || { echo "missing CLI for $pf" >&2; exit 1; }
+              test -f out/$pf/ReleaseFast/lib/libxattr_stream.a || { echo "missing static lib for $pf" >&2; exit 1; }
             done
-            for t in x86_64-windows-gnu aarch64-windows-gnu; do
-              test -f zig-out/cross/$t/bin/xattr-stream.exe || { echo "missing CLI for $t" >&2; exit 1; }
-              test -f zig-out/cross/$t/lib/xattr_stream.lib || { echo "missing static lib for $t" >&2; exit 1; }
-              test -f zig-out/cross/$t/lib/xattr_stream.dll || { echo "missing DLL for $t" >&2; exit 1; }
+            for pf in mswin-amd64 mswin-arm64; do
+              test -f out/$pf/ReleaseFast/bin/xattr-stream.exe || { echo "missing CLI for $pf" >&2; exit 1; }
+              test -f out/$pf/ReleaseFast/lib/xattr_stream.lib || { echo "missing static lib for $pf" >&2; exit 1; }
+              test -f out/$pf/ReleaseFast/lib/xattr_stream.dll || { echo "missing DLL for $pf" >&2; exit 1; }
             done
           '';
 
@@ -197,8 +197,8 @@
           ];
           shellHook = ''
             echo "xattr_stream dev shell (zig $(zig version))"
-            echo "  ./build       native library + CLI into zig-out/"
-            echo "  ./build_all   all five targets into zig-out/cross/"
+            echo "  ./build       host library + CLI, commands linked into bin/<PF>/"
+            echo "  ./build-all   all six platforms, commands linked into bin/<PF>/"
             echo "  ./test        everything"
           '';
         };

@@ -187,8 +187,12 @@ test "xs_walk visits a real tree breadth-first with a depth limit; xs_is_display
 
 test "xs_version and xs_target are stable static strings" {
 	try expectEqualStrings("0.2.0", std.mem.span(ffi.xs_version()));
+	// The target is the platform name (PF), <OS>-<ARCH>, one of six.
 	const target = std.mem.span(ffi.xs_target());
-	try expect(std.mem.indexOf(u8, target, "-") != null);
+	const platforms = [_][]const u8{ "linux-amd64", "linux-arm64", "macos-amd64", "macos-arm64", "mswin-amd64", "mswin-arm64" };
+	var matches: usize = 0;
+	for (platforms) |pf| matches += @intFromBool(std.mem.eql(u8, target, pf));
+	try expectEqual(@as(usize, 1), matches);
 	try expect(ffi.xs_limits("", 0) == -1);
 }
 

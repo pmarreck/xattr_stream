@@ -7,6 +7,8 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/capture.bash
 source "$ROOT/tests/lib/capture.bash"
+# shellcheck source=../../scripts/pf.bash
+source "$ROOT/scripts/pf.bash"
 
 BIN="${1:-}"
 if [[ -z "$BIN" || ! -x "$BIN" ]]; then
@@ -88,8 +90,8 @@ out=""; err=""; rc=0; capture "$BIN" --about
 assert_rc 0
 [[ "$(printf '%s' "$out" | wc -l)" -eq 0 ]] && pass || fail "--about must be one line"
 [[ "$out" == *"xattr-stream"* && "$out" =~ [0-9]+\.[0-9]+\.[0-9]+ ]] && pass || fail "--about missing name/version: '$out'"
-[[ "$out" == *"linux"* || "$out" == *"macos"* || "$out" == *"windows"* ]] && pass || fail "--about missing platform: '$out'"
-[[ "$out" == *"x86_64"* || "$out" == *"aarch64"* ]] && pass || fail "--about missing arch: '$out'"
+# The platform name (PF) comes from uname, independently of the binary.
+[[ "$out" == *" for $(host_pf)" ]] && pass || fail "--about should end with the platform 'for $(host_pf)': '$out'"
 
 current="usage errors"
 out=""; err=""; rc=0; capture "$BIN"

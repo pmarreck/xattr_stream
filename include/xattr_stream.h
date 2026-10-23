@@ -242,7 +242,7 @@ const char *xs_status_name(int status);
 int32_t xs_last_os_error(void);
 
 const char *xs_version(void); /* "0.2.0" */
-const char *xs_target(void);  /* e.g. "x86_64-linux", "aarch64-macos", "x86_64-windows" */
+const char *xs_target(void);  /* platform name <OS>-<ARCH>: linux|macos|mswin - amd64|arm64, e.g. "linux-amd64", "mswin-arm64" */
 
 #ifdef __cplusplus
 }

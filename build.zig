@@ -1,14 +1,33 @@
 const std = @import("std");
 
-/// Every target the library and CLI are cross-compiled for by `zig build cross`.
-/// Runtime verification happens only where a machine is available; see README.
+/// Every target the library and CLI are cross-compiled for by `zig build
+/// cross`: all six platforms (PF, <OS>-<ARCH>). Runtime verification happens
+/// only where a machine is available; see README.
 const cross_targets = [_][]const u8{
 	"x86_64-linux-musl",
 	"aarch64-linux-musl",
+	"x86_64-macos",
 	"aarch64-macos",
 	"x86_64-windows-gnu",
 	"aarch64-windows-gnu",
 };
+
+/// Platform name (PF) for a target: <OS>-<ARCH>, OS linux|macos|mswin and
+/// ARCH amd64|arm64. Output directories use it instead of compiler triples.
+fn platformName(b: *std.Build, target: std.Target) []const u8 {
+	const os = switch (target.os.tag) {
+		.linux => "linux",
+		.macos => "macos",
+		.windows => "mswin",
+		else => @panic("unsupported OS"),
+	};
+	const arch = switch (target.cpu.arch) {
+		.x86_64 => "amd64",
+		.aarch64 => "arm64",
+		else => @panic("unsupported architecture"),
+	};
+	return b.fmt("{s}-{s}", .{ os, arch });
+}
 
 const c_flags = [_][]const u8{ "-std=c11", "-Wall", "-Wextra", "-Werror" };
 
@@ -167,14 +186,15 @@ pub fn build(b: *std.Build) void {
 		test_step.dependOn(&b.addRunArtifact(t).step);
 	}
 
-	// Cross-compile every supported target into zig-out/cross/<triple>/.
+	// Cross-compile every supported target into <prefix>/<PF>/<optimize>/.
 	const cross_step = b.step("cross", "Cross-compile library and CLI for all supported targets");
 	for (cross_targets) |triple| {
 		const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable;
 		const rt = b.resolveTargetQuery(query);
 		const arts = makeArtifacts(b, rt, optimize);
-		const lib_dir = b.fmt("cross/{s}/lib", .{triple});
-		const bin_dir = b.fmt("cross/{s}/bin", .{triple});
+		const out_dir = b.fmt("{s}/{s}", .{ platformName(b, rt.result), @tagName(optimize) });
+		const lib_dir = b.fmt("{s}/lib", .{out_dir});
+		const bin_dir = b.fmt("{s}/bin", .{out_dir});
 		cross_step.dependOn(&b.addInstallArtifact(arts.static, .{
 			.dest_dir = .{ .override = .{ .custom = lib_dir } },
 		}).step);

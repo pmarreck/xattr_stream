@@ -292,15 +292,24 @@ reach `CreateFileW`, so `:`, `\` and `/` can never turn a name into a path.
 
 ## Build and test
 
+Platforms are named `<OS>-<ARCH>` (PF): OS is `linux`, `macos` or `mswin`,
+ARCH is `amd64` or `arm64`, giving six platforms. Commands are linked into
+`bin/<PF>/`, so a PATH entry for `bin/linux-amd64` never picks up a Mac
+binary copied alongside it.
+
 ```sh
-./build        # nix build, ReleaseFast, mirrors into zig-out/
-./build_all    # all five targets into zig-out/cross/<triple>/
+./build        # host platform, ReleaseFast via nix build; bin/<PF>/xattr-stream
+./build-all    # all six platforms, cross-compiled; bin/<PF>/ for each
 ./test         # Zig tests, CLI suite, C/Rust/LuaJIT/Zig consumers, pkg-config consumer
 nix flake check
 ```
 
-Direct use of the toolchain inside `nix develop`: `zig build`, `zig build
-test`, `zig build cross`.
+`./build --debug` and `./build --test` build Debug and ReleaseSafe through
+the dev shell into `zig-out/<PF>/<profile>/`. Product trees (`bin/`, `lib/`,
+`include/`) stay whole: Nix outputs are kept at `.nix-out/<PF>/ReleaseFast`
+and `.nix-out/cross/<PF>/ReleaseFast`, and `bin/<PF>/` holds only links to
+them. Without Nix: `zig build --prefix zig-out/<PF>/ReleaseFast`, `zig build
+test`, and `zig build cross --prefix <dir>`.
 
 Dependencies are declared in two places that must agree: `build.zig.zon`
 pins `printable_binary` by URL and content hash for Zig, and `flake.nix`
@@ -311,20 +320,22 @@ reports.
 
 ## Platform verification
 
-Cross-compiling proves the code builds for a target, not that it runs
-there. Mechatron Prime CI builds all five targets but can only run tests
-on x86_64 Linux, inside the Nix sandbox. The GitHub Actions workflow in
-`.github/workflows/native.yml` reruns the suites natively on macOS ARM,
-Linux ARM and both Windows architectures on every push. Results (details in
+Cross-compiling proves the code builds for a platform, not that it runs
+there. Mechatron Prime CI builds all six platforms but can only run tests
+on linux-amd64, inside the Nix sandbox. The GitHub Actions workflow in
+`.github/workflows/native.yml` reruns the suites natively on every platform
+on every push. Results (details in
 docs/plan_context/platform_verification.md):
 
-| Target | Compiles | Zig tests (real attribute I/O) | CLI suite | Consumers |
+| Platform | Compiles | Zig tests (real attribute I/O) | CLI suite | Consumers |
 |---|---|---|---|---|
-| x86_64-linux (ZFS) | yes | 97/97 | 303/303 | C, Rust, LuaJIT, Zig, pkg-config |
-| aarch64-macos 26 (APFS) | yes | 97/97 | 286 pass, 1 n/a | C, Rust, LuaJIT, Zig, pkg-config |
-| x86_64-windows 10 (NTFS) | yes | 99/99 (concurrency test green in 40 of 40 runs) | not yet ported to Windows | not run |
-| aarch64-linux (ext4) | yes | per push, GitHub Actions | per push | per push |
-| aarch64-windows | yes | per push, cross-compiled test executables run natively (Zig 0.16.0's own ARM64 Windows compiler crashes) | not yet ported | not run |
+| linux-amd64 (ZFS) | yes | 97/97 | 302/302 | C, Rust, LuaJIT, Zig, pkg-config |
+| linux-amd64 (ext4) | yes | per push, GitHub Actions | per push | per push |
+| linux-arm64 (ext4) | yes | per push | per push | per push |
+| macos-arm64 26 (APFS) | yes | 97/97 | 286 pass, 1 n/a | C, Rust, LuaJIT, Zig, pkg-config |
+| macos-amd64 (APFS) | yes | per push | per push | per push |
+| mswin-amd64 10 (NTFS) | yes | 99/99 (concurrency test green in 40 of 40 runs) | not yet ported to Windows | not run |
+| mswin-arm64 | yes | per push, cross-compiled test executables run natively (Zig 0.16.0's own ARM64 Windows compiler crashes) | not yet ported | not run |
 
 Sandboxed Nix checks cannot exercise attribute I/O at all: Nix's build
 sandbox installs a seccomp rule that makes `setxattr` fail with ENOTSUP,
@@ -336,21 +347,22 @@ the skip path. Real attribute I/O is verified by `./test`, which runs in the
 dev shell outside the sandbox.
 
 Verified natively: macOS `pathconf` limit reporting (APFS reports a
-56-bit size), Windows zero-length streams, and Windows symlink resolution
-through `path:stream`. Still unverified: custom attributes on signed macOS
-app bundles, and the ARM Linux and ARM Windows targets (see PLAN.md).
+56-bit size), Windows zero-length streams, Windows symlink resolution
+through `path:stream`, and custom attributes on signed macOS bundles, which
+leave `codesign --verify --deep --strict` valid. Still unverified: the Bash
+CLI suite on Windows (see PLAN.md).
 
 ## Why Zig
 
 The previous implementation was about 900 lines of C, roughly 60% of it
 hand-rolled Cosmopolitan syscall shims for Linux and XNU, with no library
 API and Windows returning ENOSYS. Adding Windows would have meant a third
-shim set and a second toolchain. Zig 0.16 cross-compiles all five targets
+shim set and a second toolchain. Zig 0.16 cross-compiles all six platforms
 from one host, links libSystem and kernel32 without SDKs, and gives an
 in-process unit test tier the Bash suite could not. The C CLI is kept
 deliberately: it can only reach the core through the header, which keeps
 the public ABI exercised on every build. The Cosmopolitan APE single binary
 is gone; its purpose, one easy cross-platform executable for attributes, is
-now served by the per-target static binaries from `./build_all`.
+now served by the per-platform static binaries from `./build-all`.
 
 MIT License.

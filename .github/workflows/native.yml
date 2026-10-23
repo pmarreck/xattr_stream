@@ -1,7 +1,8 @@
-# Native runtime tests on hosted runners for the platforms the project's
-# main CI (Mechatron Prime CI, a Nix builder on x86_64 Linux) can only
-# cross-compile for. Attribute I/O needs a real filesystem, which Nix's
-# build sandbox does not provide, so these run outside any sandbox.
+# Native runtime tests on hosted runners, one per platform (PF, <OS>-<ARCH>):
+# macos-arm64, macos-amd64, linux-arm64, linux-amd64, mswin-amd64 and
+# mswin-arm64. The project's main CI (Mechatron Prime CI, a Nix builder on
+# x86_64 Linux) runs tests only inside the Nix build sandbox and can only
+# cross-compile for the others; these run on each platform's own filesystem.
 name: native
 
 on:
@@ -17,7 +18,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-24.04-arm]
+        # macos-arm64, macos-amd64, linux-arm64, linux-amd64
+        os: [macos-14, macos-15-intel, ubuntu-24.04-arm, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

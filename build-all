@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Cross-compiles the library and CLI for all six platforms (PF, <OS>-<ARCH>):
+#   linux-amd64, linux-arm64 (static musl CLI), macos-amd64, macos-arm64,
+#   mswin-amd64, mswin-arm64
+# The product trees land in .nix-out/cross/<PF>/ReleaseFast/{bin,lib}, and
+# each platform's command is linked into bin/<PF>/, except the host's, which
+# ./build owns. Cross-compiling proves the code builds for a platform; it
+# does not prove it runs there (see README).
+# Without Nix: zig build cross --prefix <dir>
+set -u
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT" || exit 2
+# shellcheck source=scripts/pf.bash
+source "$ROOT/scripts/pf.bash"
+
+host="$(host_pf)" || host=""
+mkdir -p .nix-out
+nix build .#cross -o .nix-out/cross || exit 1
+
+status=0
+for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64; do
+	exe=""
+	[[ "$pf" == mswin-* ]] && exe=".exe"
+	product=".nix-out/cross/$pf/ReleaseFast"
+	if [[ ! -f "$product/bin/xattr-stream$exe" ]]; then
+		echo "build-all: missing $product/bin/xattr-stream$exe" >&2
+		status=1
+		continue
+	fi
+	if [[ "$pf" == "$host" ]]; then
+		echo "kept:  bin/$pf/ (host; ./build publishes it)"
+		continue
+	fi
+	mkdir -p "bin/$pf"
+	ln -sfn "../../$product/bin/xattr-stream$exe" "bin/$pf/xattr-stream$exe" || status=1
+	echo "built: bin/$pf/xattr-stream$exe -> $product/bin/xattr-stream$exe"
+done
+exit "$status"

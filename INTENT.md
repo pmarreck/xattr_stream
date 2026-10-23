@@ -28,8 +28,9 @@ rewrite. The rewrite was chosen; the reasoning is in README "Why Zig".
   symlink policy and bounded value sizes.
 - The CLI (`xattr-stream`) exercises only the public C ABI.
 - Consumers in C, Rust, Zig and LuaJIT compile and pass a round trip in CI.
-- Cross-compiles for x86_64/aarch64 Linux, aarch64 macOS, x86_64/aarch64
-  Windows from one toolchain.
+- Builds for all six platforms (PF, `<OS>-<ARCH>`: `linux`, `macos` or
+  `mswin` with `amd64` or `arm64`) from one toolchain, macos-amd64 included
+  (BDFN, 2026-10-23). Native commands are published in `bin/<PF>/`.
 
 ## Scope and non-goals
 
@@ -67,11 +68,11 @@ data streams were chosen; see README).
 
 - `./test` runs Zig unit and integration tests against real OS calls on
   isolated temp fixtures, the Bash CLI suite, and all four consumers.
-- `nix flake check` runs the same as sandboxed checks plus the five-target
+- `nix flake check` runs the same as sandboxed checks plus the six-platform
   cross-compile.
-- Runtime verification is honest per platform: Linux x86_64 verified on the
-  the development machine; macOS and Windows are cross-compiled and compile-checked but not
-  yet executed (see README "Platform verification").
+- Runtime verification is honest per platform: each platform's suite runs
+  natively (development machines and GitHub Actions), and anything not run
+  there is reported as not run (see README "Platform verification").
 
 ## Open questions
 

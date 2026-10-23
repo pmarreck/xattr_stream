@@ -89,7 +89,20 @@ pub const xs_buffer = extern struct {
 	cap: usize,
 };
 
-const target_string = @tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag);
+/// Platform name (PF): <OS>-<ARCH> with OS linux, macos or mswin and ARCH
+/// amd64 or arm64, independent of compiler triple spellings.
+const target_string = pf_os ++ "-" ++ pf_arch;
+const pf_os = switch (builtin.os.tag) {
+	.linux => "linux",
+	.macos => "macos",
+	.windows => "mswin",
+	else => @compileError("unsupported OS"),
+};
+const pf_arch = switch (builtin.cpu.arch) {
+	.x86_64 => "amd64",
+	.aarch64 => "arm64",
+	else => @compileError("unsupported architecture"),
+};
 
 comptime {
 	// The header's enum is frozen; keep the Zig side pinned to it.

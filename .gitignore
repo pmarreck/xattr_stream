@@ -15,3 +15,4 @@ CLAUDE*.md
 ZIG_RECENT_API_CHANGES*.md
 /tests/consumers/zig/zig-pkg/
 /zig-pkg/
+/.nix-out/

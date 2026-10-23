@@ -14,6 +14,12 @@ if ! command -v zig >/dev/null 2>&1 && [[ -z "${XS_TEST_REEXEC:-}" ]] && command
 	XS_TEST_REEXEC=1 exec nix develop -c "$ROOT/test" "$@"
 fi
 
+# shellcheck source=scripts/pf.bash
+source "$ROOT/scripts/pf.bash"
+pf="$(host_pf)" || { echo "test: unsupported host platform: $(uname -sm)" >&2; exit 2; }
+# The tree under test: built here, never whatever is on PATH.
+OUT="zig-out/$pf/ReleaseFast"
+
 failures=0
 step() {
 	local name="$1"
@@ -34,8 +40,8 @@ case "$(uname -s)" in
 esac
 
 step "zig build test" zig build test
-step "zig build" zig build
-step "cli (bash)" bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
+step "zig build" zig build --prefix "$OUT"
+step "cli (bash)" bash tests/cli/test_cli.sh "$OUT/bin/xattr-stream"
 
 # Runs a compile or link command and fails on any diagnostic it prints, so
 # linker warnings (for example a macOS deployment-target mismatch) cannot
@@ -51,14 +57,14 @@ quiet_build() {
 	fi
 }
 consumer_c() {
-	quiet_build clang -std=c99 -Wall -Wextra -Werror -pedantic -Izig-out/include \
-		-o "$TMPDIR/xs_consumer_c" tests/consumers/c/consumer.c zig-out/lib/libxattr_stream.a && "$TMPDIR/xs_consumer_c"
+	quiet_build clang -std=c99 -Wall -Wextra -Werror -pedantic -I"$OUT/include" \
+		-o "$TMPDIR/xs_consumer_c" tests/consumers/c/consumer.c "$OUT/lib/libxattr_stream.a" && "$TMPDIR/xs_consumer_c"
 }
 consumer_rust() {
-	quiet_build rustc --edition 2021 -O -C link-arg=zig-out/lib/libxattr_stream.a -o "$TMPDIR/xs_consumer_rs" tests/consumers/rust/consumer.rs && "$TMPDIR/xs_consumer_rs"
+	quiet_build rustc --edition 2021 -O -C link-arg="$OUT/lib/libxattr_stream.a" -o "$TMPDIR/xs_consumer_rs" tests/consumers/rust/consumer.rs && "$TMPDIR/xs_consumer_rs"
 }
 consumer_luajit() {
-	luajit tests/consumers/luajit/consumer.lua "zig-out/lib/libxattr_stream$shared_ext"
+	luajit tests/consumers/luajit/consumer.lua "$OUT/lib/libxattr_stream$shared_ext"
 }
 # Builds the C consumer from nothing but what pkg-config reports, the way an
 # outside project would, against the installed tree (relocatable .pc file).
@@ -67,7 +73,7 @@ consumer_pkgconfig() {
 	# Nix pkg-config wrapper replaces PKG_CONFIG_PATH with its own
 	# platform-suffixed variable. Search-path lookup is covered by the
 	# test-overlay-pkgconfig flake check, where the setup hook fills it.
-	local pc="$ROOT/zig-out/lib/pkgconfig/xattr_stream.pc" flags libdir private all word
+	local pc="$ROOT/$OUT/lib/pkgconfig/xattr_stream.pc" flags libdir private all word
 	libdir="$(pkg-config --variable=libdir "$pc")" || return 1
 	# Static: -l would pick the .so when both exist, so link the archive from
 	# the reported libdir plus the private libs, as a static consumer would.
