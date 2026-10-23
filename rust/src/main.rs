@@ -1246,6 +1246,11 @@ fn default_sigpipe() {
 fn default_sigpipe() {}
 
 fn main() {
+	// A debug build says so, so nobody benchmarks or ships one by mistake.
+	// MUTE_DEBUG_STATUS (any non-empty value) silences it.
+	if cfg!(debug_assertions) && std::env::var_os("MUTE_DEBUG_STATUS").map_or(true, |v| v.is_empty()) {
+		eput(b"\x1b[33mDEBUG BUILD!\x1b[0m\n");
+	}
 	default_sigpipe();
 	std::process::exit(run());
 }

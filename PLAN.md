@@ -5,7 +5,6 @@ limits and evidence: docs/plan_context/.
 
 ## Next
 
-- [ ] Debug builds of the CLI announce "DEBUG BUILD" in yellow on stderr unless MUTE_DEBUG_STATUS is set (`./build --debug` help already claims this; nothing implements it yet)
 - [ ] Rust implementation: confirm the native CI runs (macOS ARM/Intel, Linux ARM/x64 through `./test`; Windows x64/ARM through `cargo test`)
 - [ ] Rust cross builds for all six platforms in `./build-all` (needs Rust standard libraries for the other targets in the flake, e.g. a rust-overlay toolchain)
 - [ ] macOS adapter (Zig): getxattr(2) documents ENOTSUP (45) for volumes without attributes, but src/darwin.zig maps only EOPNOTSUPP (102) to XS_UNSUPPORTED, so such a volume likely reports XS_IO; the Rust adapter maps both. Add an errno-mapping test, then fix
@@ -14,6 +13,7 @@ limits and evidence: docs/plan_context/.
 
 ## Recently done
 
+- [x] Debug builds of both CLIs print a yellow `DEBUG BUILD!` on stderr (silenced by a non-empty MUTE_DEBUG_STATUS); `./test` checks Debug and release builds of each (done 2026-10-23 11:31 EDT)
 - [x] Rust implementation in `rust/` (core, same C ABI, CLI `xattr-stream-rs`, no crates): CLI suite 305/305, differential 834 cases with 0 mismatches (catches planted one-character bugs), C and LuaJIT consumers over the Rust library, `nix build .#rust` (done 2026-10-23 11:25 EDT)
 - [x] Found by the port and fixed in the C CLI too: numeric options take plain digits (`--cols=-1` wrapped to 2^64-1 and table padding ran practically forever); `--limit 18446744073709551615` no longer hangs `put` (done 2026-10-23 11:10 EDT)
 - [x] Platform names (PF, `<OS>-<ARCH>`) in `xs_target()`/`--about`; six-platform cross step into `<PF>/<profile>/`; `./build` and `./build-all` link commands into `bin/<PF>/`; `build_all` renamed `build-all`; CI matrix adds macos-amd64 and linux-amd64 (done 2026-10-23 10:42 EDT)

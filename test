@@ -43,6 +43,11 @@ esac
 step "zig build test" zig build test
 step "zig build" zig build --prefix "$OUT"
 step "cli (bash)" bash tests/cli/test_cli.sh "$OUT/bin/xattr-stream"
+step "debug banner: release build is silent" bash tests/cli/debug_banner.sh "$OUT/bin/xattr-stream" release
+debug_cli() {
+	zig build -Doptimize=Debug --prefix "zig-out/$pf/Debug" && bash tests/cli/debug_banner.sh "zig-out/$pf/Debug/bin/xattr-stream" debug
+}
+step "debug banner: Debug build announces itself" debug_cli
 
 # Runs a compile or link command and fails on any diagnostic it prints, so
 # linker warnings (for example a macOS deployment-target mismatch) cannot
@@ -105,6 +110,9 @@ rust_unit() {
 rust_build() {
 	(cd rust && quiet_build cargo build --release --quiet)
 }
+rust_debug_cli() {
+	(cd rust && quiet_build cargo build --quiet) && bash tests/cli/debug_banner.sh "${RS%/release}/debug/xattr-stream-rs" debug
+}
 rust_version() {
 	local zon cargo
 	zon="$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' build.zig.zon)"
@@ -130,6 +138,8 @@ if command -v cargo >/dev/null 2>&1; then
 	step "rust: cargo test" rust_unit
 	step "rust: cargo build" rust_build
 	step "rust: cli (bash)" bash tests/cli/test_cli.sh "$RS/xattr-stream-rs"
+	step "rust: debug banner: release build is silent" bash tests/cli/debug_banner.sh "$RS/xattr-stream-rs" release
+	step "rust: debug banner: debug build announces itself" rust_debug_cli
 	step "rust: differential against the C CLI" bash tests/cli/differential.sh "$OUT/bin/xattr-stream" "$RS/xattr-stream-rs"
 	if command -v clang >/dev/null 2>&1; then step "rust: consumer: C over the Rust library" consumer_c_over_rust; fi
 	if command -v luajit >/dev/null 2>&1; then step "rust: consumer: LuaJIT over the Rust library" consumer_luajit_over_rust; fi

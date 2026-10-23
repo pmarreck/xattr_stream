@@ -1074,6 +1074,12 @@ static int cmd_load(const cli_opts *o, const char *file) {
 }
 
 int main(int argc, char **argv) {
+#ifdef XS_DEBUG_BUILD
+	/* A debug build says so, so nobody benchmarks or ships one by mistake.
+	 * MUTE_DEBUG_STATUS (any non-empty value) silences it. */
+	const char *mute = getenv("MUTE_DEBUG_STATUS");
+	if (!mute || !*mute) fputs("\x1b[33mDEBUG BUILD!\x1b[0m\n", stderr);
+#endif
 
 	cli_opts o;
 	int cols_given = 0;

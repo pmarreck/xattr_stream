@@ -30,6 +30,8 @@ fn platformName(b: *std.Build, target: std.Target) []const u8 {
 }
 
 const c_flags = [_][]const u8{ "-std=c11", "-Wall", "-Wextra", "-Werror" };
+/// Debug builds of the CLI announce themselves on stderr (see main()).
+const c_debug_flags = c_flags ++ [_][]const u8{"-DXS_DEBUG_BUILD=1"};
 
 const Artifacts = struct {
 	static: *std.Build.Step.Compile,
@@ -135,7 +137,7 @@ fn makeArtifacts(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
 	});
 	cli_mod.addIncludePath(b.path("include"));
 	cli_mod.addIncludePath(pb.path("src"));
-	cli_mod.addCSourceFile(.{ .file = b.path("src/xattr_stream_cli.c"), .flags = &c_flags });
+	cli_mod.addCSourceFile(.{ .file = b.path("src/xattr_stream_cli.c"), .flags = if (optimize == .Debug) &c_debug_flags else &c_flags });
 	cli_mod.linkLibrary(cli_lib);
 	cli_mod.linkLibrary(pb.artifact("printable_binary"));
 	const cli = b.addExecutable(.{
