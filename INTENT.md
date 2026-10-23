@@ -28,6 +28,9 @@ rewrite. The rewrite was chosen; the reasoning is in README "Why Zig".
   symlink policy and bounded value sizes.
 - The CLI (`xattr-stream`) exercises only the public C ABI.
 - Consumers in C, Rust, Zig and LuaJIT compile and pass a round trip in CI.
+- A second implementation in pure Rust (`rust/`: core, the same C ABI, CLI
+  `xattr-stream-rs`) behaves identically, held to it by the shared CLI suite
+  and a differential test against the C CLI (BDFN, 2026-10-23).
 - Builds for all six platforms (PF, `<OS>-<ARCH>`: `linux`, `macos` or
   `mswin` with `amd64` or `arm64`) from one toolchain, macos-amd64 included
   (BDFN, 2026-10-23). Native commands are published in `bin/<PF>/`.

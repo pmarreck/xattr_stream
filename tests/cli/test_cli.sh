@@ -689,6 +689,40 @@ assert_rc 0
 out=""; err=""; rc=0; capture "$BIN" get -- "$f" k
 assert_out "w"
 
+current="numeric options take plain decimal digits"
+# strtoull would accept " 5", "+5" and "-1" (wrapping to 2^64-1); a wrapped
+# --cols width made table padding loop practically forever.
+f="$(new_file f9)"
+"$BIN" put "$f" k <<<"v"
+# Output is cut at 1000 bytes and the run bounded, so a regression fails
+# instead of filling memory.
+refused() {
+	local errf="$tmpdir/numeric.err" outf="$tmpdir/numeric.out" st
+	timeout 10 "$BIN" "$@" 2>"$errf" | head -c 1000 >"$outf"
+	st="${PIPESTATUS[0]}"
+	[[ $st -eq 2 && ! -s "$outf" ]] && grep -q "needs" "$errf"
+}
+bad_numbers=0
+for spec in "--cols=-1" "--cols= 3" "--cols=+2" "--cols=1,-1" "--cols=1x" "--max-width=-1" "-w= 2" "-w=+1" "--depth=+1" "--depth= 1" "-d=-0"; do
+	refused "$spec" dump "$f" && bad_numbers=$((bad_numbers + 1))
+done
+for spec in " 5" "+5" "-1" "5 "; do
+	refused --limit "$spec" len "$f" k && bad_numbers=$((bad_numbers + 1))
+done
+[[ $bad_numbers -eq 15 ]] && pass || fail "expected all 15 malformed numbers refused with exit 2, refused $bad_numbers"
+good_numbers=0
+for spec in "--cols=0,3" "--cols=12" "--max-width=0" "-w=4" "--depth=0" "-d=1"; do
+	out=""; err=""; rc=0; capture "$BIN" "$spec" dump "$f"
+	[[ $rc -eq 0 ]] && good_numbers=$((good_numbers + 1))
+done
+out=""; err=""; rc=0; capture "$BIN" --limit 0 len "$f" k
+[[ $rc -eq 0 ]] && good_numbers=$((good_numbers + 1))
+[[ $good_numbers -eq 7 ]] && pass || fail "expected all 7 plain numbers accepted, accepted $good_numbers"
+# The largest --limit must not overflow the bounded stdin read (limit + 1
+# once wrapped to 0 and spun forever on zero-byte reads).
+printf 'big limit' | timeout 10 "$BIN" --limit 18446744073709551615 put "$f" k >/dev/null 2>&1
+[[ $? -eq 0 && "$("$BIN" get "$f" k)" == "big limit" ]] && pass || fail "--limit 18446744073709551615 put should store the value"
+
 current="symlink policy"
 f="$(new_file target)"
 ln -s "$f" "$tmpdir/link"

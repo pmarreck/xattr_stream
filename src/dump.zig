@@ -157,6 +157,7 @@ test "parseLine emits the path first, then xattrs and xattrs_pb entries in docum
 		.{ "{\"path\":\"p\"}", "path||p\n" },
 		.{ "  {\"path\":\"p\",\"xattrs\":{}}  ", "path||p\n" },
 		.{ "{\"path\":\"a\\\"b\",\"xattrs\":{\"k\":\"\\u00e9 x\"}}", "path||a\"b\nxattr|k|\xc3\xa9 x\n" },
+		.{ "{ \"path\" : \"\\ud83d\\ude00\\/\\t\" , \"xattrs\" : { \"\" : \"\" } }", "path||\xf0\x9f\x98\x80/\t\nxattr||\n" },
 	};
 	for (cases) |c| {
 		const got = try record(c[0]);
@@ -175,6 +176,14 @@ test "parseLine rejects malformed lines as a set" {
 		"{\"path\":\"a\",\"extra\":1}",              "{\"path\":\"a\",\"path\":\"b\"}",
 		"{\"path\":\"a\",\"xattrs\":{\"k\":\"1\",\"k\":\"2\"}}", "{\"path\":\"a\"} x",
 		"{\"path\":\"a\"",                           "{\"path\":\"a\",\"xattrs_pb\":{\"k\":{}}}",
+		// JSON rules a second parser (rust/src/dump.rs) must match exactly.
+		"{\"path\":\"a\",}",                         "{\"path\":\"a\",\"xattrs\":{\"k\":\"v\",}}",
+		"{\"path\":\"\\ud800\"}",                    "{\"path\":\"\\udc00\"}",
+		"{\"path\":\"\\ud800\\u0041\"}",             "{\"path\":\"\\x\"}",
+		"{\"path\":\"\\u12g4\"}",                    "{\"path\":\"a\tb\"}",
+		"{\"path\":\"caf\xe9\"}",                    "\xef\xbb\xbf{\"path\":\"a\"}",
+		"{\"path\":\"a\",\"xattrs\":{\"k\":\"1\",\"\\u006b\":\"2\"}}", "{\"path\":\"a\",\"xattrs\":{},\"xattrs\":{}}",
+		"{'path':'a'}",                              "{\"path\":\"a\"}}",
 	};
 	var rejected: usize = 0;
 	for (reject) |line| {

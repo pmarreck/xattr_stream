@@ -17,8 +17,9 @@ fi
 # shellcheck source=scripts/pf.bash
 source "$ROOT/scripts/pf.bash"
 pf="$(host_pf)" || { echo "test: unsupported host platform: $(uname -sm)" >&2; exit 2; }
-# The tree under test: built here, never whatever is on PATH.
+# The trees under test: built here, never whatever is on PATH.
 OUT="zig-out/$pf/ReleaseFast"
+RS="${CARGO_TARGET_DIR:-$ROOT/rust/target}/release"
 
 failures=0
 step() {
@@ -95,11 +96,47 @@ consumer_zig() {
 	(cd tests/consumers/zig && zig build test)
 }
 
+# The Rust implementation (rust/): its own unit tests, a warning-free
+# release build, the same CLI suite, a byte-for-byte differential against
+# the C CLI, and the C ABI consumers linked against its library.
+rust_unit() {
+	(cd rust && cargo test --release --quiet)
+}
+rust_build() {
+	(cd rust && quiet_build cargo build --release --quiet)
+}
+rust_version() {
+	local zon cargo
+	zon="$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' build.zig.zon)"
+	cargo="$(sed -n 's/^version = "\(.*\)"$/\1/p' rust/Cargo.toml)"
+	[[ -n "$zon" && "$zon" == "$cargo" ]] || { echo "build.zig.zon version '$zon' != rust/Cargo.toml version '$cargo'" >&2; return 1; }
+}
+consumer_c_over_rust() {
+	quiet_build clang -std=c99 -Wall -Wextra -Werror -pedantic -Iinclude \
+		-o "$TMPDIR/xs_consumer_c_rs" tests/consumers/c/consumer.c -L"$RS" -lxattr_stream -Wl,-rpath,"$RS" && "$TMPDIR/xs_consumer_c_rs"
+}
+consumer_luajit_over_rust() {
+	luajit tests/consumers/luajit/consumer.lua "$RS/libxattr_stream$shared_ext"
+}
+
 if command -v clang >/dev/null 2>&1; then step "consumer: C (clang)" consumer_c; else echo "skip: clang not found"; fi
 if command -v rustc >/dev/null 2>&1; then step "consumer: Rust" consumer_rust; else echo "skip: rustc not found"; fi
 if command -v luajit >/dev/null 2>&1; then step "consumer: LuaJIT" consumer_luajit; else echo "skip: luajit not found"; fi
 if command -v clang >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1; then step "consumer: C via pkg-config" consumer_pkgconfig; else echo "skip: clang or pkg-config not found"; fi
 step "consumer: Zig module" consumer_zig
+
+if command -v cargo >/dev/null 2>&1; then
+	step "rust: version matches build.zig.zon" rust_version
+	step "rust: cargo test" rust_unit
+	step "rust: cargo build" rust_build
+	step "rust: cli (bash)" bash tests/cli/test_cli.sh "$RS/xattr-stream-rs"
+	step "rust: differential against the C CLI" bash tests/cli/differential.sh "$OUT/bin/xattr-stream" "$RS/xattr-stream-rs"
+	if command -v clang >/dev/null 2>&1; then step "rust: consumer: C over the Rust library" consumer_c_over_rust; fi
+	if command -v luajit >/dev/null 2>&1; then step "rust: consumer: LuaJIT over the Rust library" consumer_luajit_over_rust; fi
+else
+	printf '\033[31mFAIL\033[0m rust: cargo not found (the Rust implementation is required)\n' >&2
+	failures=$((failures + 1))
+fi
 
 printf '\n'
 if [[ "$failures" -eq 0 ]]; then

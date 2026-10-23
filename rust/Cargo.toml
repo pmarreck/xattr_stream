@@ -1,0 +1,25 @@
+[package]
+name = "xattr_stream"
+# Kept equal to build.zig.zon's version; ./test checks the two agree.
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Cross-platform binary-safe file attributes (Linux user xattrs, macOS xattrs, NTFS streams): Rust implementation of the xattr_stream library, C ABI and CLI"
+license = "MIT"
+publish = false
+
+[lib]
+name = "xattr_stream"
+path = "src/lib.rs"
+# rlib for the CLI and Rust callers; staticlib and cdylib export the same C
+# ABI as the Zig library (include/xattr_stream.h).
+crate-type = ["rlib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "xattr-stream-rs"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

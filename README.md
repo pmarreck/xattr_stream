@@ -5,6 +5,8 @@
 Cross-platform, binary-safe byte attributes on files and directories. One
 library (Zig core behind a C ABI), one CLI, one name grammar, one error
 taxonomy on Linux, macOS and Windows. Usable from C, Rust, Zig and LuaJIT.
+A second, pure-Rust implementation in `rust/` exports the same C ABI and
+ships the same CLI as `xattr-stream-rs` (see "Rust implementation").
 
 | OS | Mechanism | Native form of logical name `k` |
 |---|---|---|
@@ -279,6 +281,41 @@ pkgs = import nixpkgs { inherit system; overlays = [ xattr_stream.overlays.defau
 The `test-overlay-pkgconfig` check does exactly this with the C consumer.
 Zig projects should use a `build.zig.zon` dependency and the `xattr_stream`
 module instead.
+
+## Rust implementation
+
+`rust/` is a port of the whole project to Rust with no third-party crates:
+the core (names, values, listing, dump parsing, tree walking, OS adapters
+for Linux, macOS and Windows), the C ABI from `include/xattr_stream.h`
+(static and shared library), and the CLI as `xattr-stream-rs`. It behaves
+identically, byte for byte, and these checks hold it to that:
+
+- The Bash CLI suite (`tests/cli/test_cli.sh`) runs unchanged against both
+  CLIs.
+- `tests/cli/differential.sh` builds a seeded fixture tree (random names,
+  text and binary values, non-UTF-8 and control-character file names where
+  the filesystem allows them, symlinks), runs about 830 commands through both
+  CLIs, every listing format and error path among them, plus 400 fuzzed
+  `load` lines, and requires identical stdout, stderr, exit code and
+  resulting attributes. Planting a one-character bug in the Rust code makes
+  it fail.
+- The C and LuaJIT consumers link against the Rust library.
+- Rust unit tests port the Zig ones: name sets, dump-line sets, walk order
+  on a fake tree, the read-retry logic on a fake adapter, and real-attribute
+  tests on private temporary directories. printable-binary is checked in
+  both directions for every byte and byte pair, and against a fixture
+  written by the independent LuaJIT encoder.
+
+```sh
+cd rust && cargo build --release   # target/release/xattr-stream-rs, libxattr_stream.{a,so,dylib}
+nix build .#rust                   # bin/, lib/, include/ as one tree
+```
+
+The one intended difference is `--about`, which says "Rust implementation".
+Where the two disagreed, the C CLI was fixed as well: numeric options now
+take plain decimal digits (`strtoull` had accepted `-1` for `--cols` and
+wrapped it to a width that made table padding run practically forever), and
+`--limit 18446744073709551615` no longer hangs `put`.
 
 ## Windows: streams, not EAs
 

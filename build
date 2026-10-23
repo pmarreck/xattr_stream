@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Builds the host platform's library, header and CLI with all optimizations
-# and links the commands into bin/<PF>/, where PF is the platform name
-# <OS>-<ARCH> (OS linux, macos or mswin; ARCH amd64 or arm64).
-#   ./build          ReleaseFast via `nix build`, output kept at .nix-out/<PF>/ReleaseFast
-#   ./build --debug  Debug build via the dev shell into zig-out/<PF>/Debug
-#   ./build --test   ReleaseSafe build via the dev shell into zig-out/<PF>/ReleaseSafe
-# Without Nix: zig build --prefix zig-out/<PF>/ReleaseFast
+# Builds the host platform's library, header and CLI with all optimizations,
+# for both implementations, and links the commands into bin/<PF>/, where PF
+# is the platform name <OS>-<ARCH> (OS linux, macos or mswin; ARCH amd64 or
+# arm64): xattr-stream (C CLI, Zig core) and xattr-stream-rs (Rust).
+#   ./build          release via `nix build`, kept at .nix-out/<PF>/ReleaseFast and .nix-out/<PF>/rust-release
+#   ./build --debug  Debug builds via the dev shell (zig-out/<PF>/Debug, cargo's debug profile)
+#   ./build --test   ReleaseSafe via the dev shell (zig-out/<PF>/ReleaseSafe, cargo's release profile)
+# Without Nix: zig build --prefix zig-out/<PF>/ReleaseFast; cd rust && cargo build --release
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +20,7 @@ for arg in "$@"; do
 		--debug) mode="debug" ;;
 		--test) mode="safe" ;;
 		-h|--help)
-			sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+			sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
 			exit 0
 			;;
 		*) echo "build: unknown argument '$arg'" >&2; exit 2 ;;
@@ -31,32 +32,45 @@ pf="$(host_pf)" || { echo "build: unsupported host platform: $(uname -sm)" >&2; 
 # Points bin/<PF>/<command> at the product tree, only after a successful
 # build, so a failed build leaves the previous working command in place.
 # Windows gets copies: symlinks there need extra privileges.
+# $1: product directory holding the command, $2: the command. Relative
+# links for products inside the repository, absolute ones otherwise (a
+# CARGO_TARGET_DIR elsewhere).
 publish() {
-	local product="$1" cmd exe=""
+	local dir="$1" cmd="$2" exe="" target
 	[[ "$pf" == mswin-* ]] && exe=".exe"
 	mkdir -p "bin/$pf"
-	for cmd in xattr-stream; do
-		if [[ -n "$exe" ]]; then
-			cp -f "$product/bin/$cmd$exe" "bin/$pf/$cmd$exe" || return 1
-		else
-			ln -sfn "../../$product/bin/$cmd" "bin/$pf/$cmd" || return 1
-		fi
-		echo "built: bin/$pf/$cmd$exe -> $product/bin/$cmd$exe"
-	done
+	if [[ -n "$exe" ]]; then
+		cp -f "$dir/$cmd$exe" "bin/$pf/$cmd$exe" || return 1
+	else
+		case "$dir" in
+			/*) target="$dir/$cmd" ;;
+			*) target="../../$dir/$cmd" ;;
+		esac
+		ln -sfn "$target" "bin/$pf/$cmd" || return 1
+	fi
+	echo "built: bin/$pf/$cmd$exe -> $dir/$cmd$exe"
 }
+
+cargo_dir="${CARGO_TARGET_DIR:-$ROOT/rust/target}"
 
 case "$mode" in
 	release)
 		mkdir -p ".nix-out/$pf"
 		nix build .#default -o ".nix-out/$pf/ReleaseFast" || exit 1
-		publish ".nix-out/$pf/ReleaseFast"
+		nix build .#rust -o ".nix-out/$pf/rust-release" || exit 1
+		publish ".nix-out/$pf/ReleaseFast/bin" xattr-stream
+		publish ".nix-out/$pf/rust-release/bin" xattr-stream-rs
 		;;
 	debug)
 		nix develop -c zig build -Doptimize=Debug --prefix "zig-out/$pf/Debug" || exit 1
-		publish "zig-out/$pf/Debug"
+		(cd rust && nix develop -c cargo build) || exit 1
+		publish "zig-out/$pf/Debug/bin" xattr-stream
+		publish "${cargo_dir#"$ROOT/"}/debug" xattr-stream-rs
 		;;
 	safe)
 		nix develop -c zig build -Doptimize=ReleaseSafe --prefix "zig-out/$pf/ReleaseSafe" || exit 1
-		publish "zig-out/$pf/ReleaseSafe"
+		(cd rust && nix develop -c cargo build --release) || exit 1
+		publish "zig-out/$pf/ReleaseSafe/bin" xattr-stream
+		publish "${cargo_dir#"$ROOT/"}/release" xattr-stream-rs
 		;;
 esac

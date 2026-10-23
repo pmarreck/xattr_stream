@@ -29,7 +29,7 @@ jobs:
         run: nix develop -c ./test
 
   windows-x64:
-    name: windows-latest (Zig tests)
+    name: windows-latest (Zig and Rust tests)
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -41,6 +41,10 @@ jobs:
         run: zig build test --summary all
       - name: Build library and CLI
         run: zig build
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust implementation, unit and integration tests
+        working-directory: rust
+        run: cargo test --release
       # Zig 0.16.0's own aarch64-windows compiler crashes with an access
       # violation (0xC0000005) before compiling anything, so the ARM job runs
       # test executables cross-compiled here instead of compiling natively.
@@ -57,11 +61,16 @@ jobs:
           path: arm64-tests/*.exe
 
   windows-arm:
-    name: windows-11-arm (Zig tests, cross-compiled)
+    name: windows-11-arm (Rust tests; Zig tests cross-compiled)
     needs: windows-x64
     runs-on: windows-11-arm
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust implementation, unit and integration tests (native)
+        working-directory: rust
+        run: cargo test --release
       - uses: actions/download-artifact@v4
         with:
           name: arm64-windows-tests

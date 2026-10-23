@@ -6,11 +6,16 @@ limits and evidence: docs/plan_context/.
 ## Next
 
 - [ ] Debug builds of the CLI announce "DEBUG BUILD" in yellow on stderr unless MUTE_DEBUG_STATUS is set (`./build --debug` help already claims this; nothing implements it yet)
-- [ ] Rust implementation (pure Rust, no crates): library plus `xattr-stream-rs` CLI with byte-identical output; oracles are the existing Bash CLI suite run against it and a seeded differential test against the Zig/C CLI
+- [ ] Rust implementation: confirm the native CI runs (macOS ARM/Intel, Linux ARM/x64 through `./test`; Windows x64/ARM through `cargo test`)
+- [ ] Rust cross builds for all six platforms in `./build-all` (needs Rust standard libraries for the other targets in the flake, e.g. a rust-overlay toolchain)
+- [ ] macOS adapter (Zig): getxattr(2) documents ENOTSUP (45) for volumes without attributes, but src/darwin.zig maps only EOPNOTSUPP (102) to XS_UNSUPPORTED, so such a volume likely reports XS_IO; the Rust adapter maps both. Add an errno-mapping test, then fix
+- [ ] Zig walker: check how std.Io.Dir iteration reports entries on filesystems without d_type; if they come back as `.unknown`, directories would be listed but never entered (the Rust walker falls back to lstat)
 - [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) and decide LF-only text output (context: docs/plan_context/platform_verification.md)
 
 ## Recently done
 
+- [x] Rust implementation in `rust/` (core, same C ABI, CLI `xattr-stream-rs`, no crates): CLI suite 305/305, differential 834 cases with 0 mismatches (catches planted one-character bugs), C and LuaJIT consumers over the Rust library, `nix build .#rust` (done 2026-10-23 11:25 EDT)
+- [x] Found by the port and fixed in the C CLI too: numeric options take plain digits (`--cols=-1` wrapped to 2^64-1 and table padding ran practically forever); `--limit 18446744073709551615` no longer hangs `put` (done 2026-10-23 11:10 EDT)
 - [x] Platform names (PF, `<OS>-<ARCH>`) in `xs_target()`/`--about`; six-platform cross step into `<PF>/<profile>/`; `./build` and `./build-all` link commands into `bin/<PF>/`; `build_all` renamed `build-all`; CI matrix adds macos-amd64 and linux-amd64 (done 2026-10-23 10:42 EDT)
 - [x] GitHub Actions native workflow green on macOS ARM, Linux ARM, Windows x64 and Windows ARM (done 2026-10-21 17:15 EDT, de53a03)
 - [x] Portable value limit corrected from 4096 to 3916 bytes after measuring ext4 (4040 for a 1-byte name, 4008 for 36 bytes) (done 2026-10-21 17:10 EDT)

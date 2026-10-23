@@ -275,6 +275,9 @@ static void report(const cli_opts *o, const char *op, const char *path, const ch
  * 0 ok, XS_TOO_LARGE, or XS_IO. */
 static int read_stdin(uint64_t limit, unsigned char **out, size_t *out_len) {
 	size_t cap = READ_CHUNK, len = 0;
+	/* Reading one byte past the limit proves the input too large. Saturate:
+	 * at the largest limit, limit + 1 would wrap to 0 and spin forever. */
+	uint64_t stop = limit == UINT64_MAX ? UINT64_MAX : limit + 1;
 	unsigned char *buf = malloc(cap);
 	if (!buf) return XS_OUT_OF_MEMORY;
 	for (;;) {
@@ -286,7 +289,7 @@ static int read_stdin(uint64_t limit, unsigned char **out, size_t *out_len) {
 			cap *= 2;
 		}
 		size_t want = cap - len;
-		if ((uint64_t)len + want > limit + 1) want = (size_t)(limit + 1 - len);
+		if ((uint64_t)len + want > stop) want = (size_t)(stop - len);
 		size_t n = fread(buf + len, 1, want, stdin);
 		len += n;
 		if ((uint64_t)len > limit) { free(buf); return XS_TOO_LARGE; }
@@ -310,14 +313,24 @@ static int write_all(FILE *out, const unsigned char *p, size_t len) {
 	return fflush(out) == 0 ? 0 : -1;
 }
 
-static int parse_u64(const char *s, uint64_t *out) {
-	if (!s || !*s) return -1;
-	char *end = NULL;
-	errno = 0;
-	unsigned long long v = strtoull(s, &end, 10);
-	if (errno != 0 || *end != '\0' || s[0] == '-') return -1;
-	*out = (uint64_t)v;
+/* A plain decimal number: one or more ASCII digits and nothing else, with
+ * no overflow. strtoull alone would also take leading space and a sign, and
+ * wrap "-1" to 2^64-1 (a width that made table padding loop for ages). */
+static int parse_digits(const char *s, size_t len, uint64_t *out) {
+	if (len == 0) return -1;
+	uint64_t v = 0;
+	for (size_t i = 0; i < len; i++) {
+		if (s[i] < '0' || s[i] > '9') return -1;
+		uint64_t d = (uint64_t)(s[i] - '0');
+		if (v > (UINT64_MAX - d) / 10) return -1;
+		v = v * 10 + d;
+	}
+	*out = v;
 	return 0;
+}
+
+static int parse_u64(const char *s, uint64_t *out) {
+	return s ? parse_digits(s, strlen(s), out) : -1;
 }
 
 static int cmd_put(const cli_opts *o, const char *path, const char *name) {
@@ -1107,17 +1120,18 @@ int main(int argc, char **argv) {
 				else if (i + 1 < argc) spec = argv[++i];
 				if (!spec || !*spec) { usage(stderr); return EXIT_USAGE; }
 				o.cols_n = 0;
-				while (*spec) {
-					char *end = NULL;
-					errno = 0;
-					unsigned long long w = strtoull(spec, &end, 10);
-					if (errno != 0 || end == spec || (*end != '\0' && *end != ',') || o.cols_n == MAX_COLS) {
+				for (;;) {
+					const char *comma = strchr(spec, ',');
+					size_t n = comma ? (size_t)(comma - spec) : strlen(spec);
+					uint64_t w = 0;
+					if (parse_digits(spec, n, &w) != 0 || w > SIZE_MAX || o.cols_n == MAX_COLS) {
 						fprintf(stderr, PROG ": --cols needs up to %d comma-separated non-negative integers\n", MAX_COLS);
 						usage(stderr);
 						return EXIT_USAGE;
 					}
 					o.cols[o.cols_n++] = (size_t)w;
-					spec = *end == ',' ? end + 1 : end;
+					if (!comma) break;
+					spec = comma + 1;
 				}
 				cols_given = 1;
 				continue;

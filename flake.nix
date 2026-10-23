@@ -17,6 +17,8 @@
       # lib/pkgconfig/xattr_stream.pc), e.g. in buildInputs with pkg-config.
       overlays.default = final: prev: {
         xattr_stream = self.packages.${prev.stdenv.hostPlatform.system}.default;
+        # The Rust implementation: same C ABI and header, CLI xattr-stream-rs.
+        xattr_stream_rs = self.packages.${prev.stdenv.hostPlatform.system}.rust;
       };
     } //
     flake-utils.lib.eachDefaultSystem (system:
@@ -92,6 +94,36 @@
           };
         };
 
+        # The Rust implementation (rust/): CLI, static and shared library with
+        # the same C ABI, and the shared header. `cargo test` runs in the
+        # sandbox, where attribute tests skip (no setxattr) and the rest run.
+        # The crate has no dependencies; the whole repository is the source
+        # because a test reads tests/cli/fixtures/allbytes.pb.
+        rust = pkgs.rustPlatform.buildRustPackage {
+          pname = "xattr_stream-rs";
+          inherit version src;
+          cargoLock.lockFile = ./rust/Cargo.lock;
+          cargoRoot = "rust";
+          # The sandbox refuses setxattr; attribute tests are told to expect it.
+          XS_EXPECT_UNSUPPORTED = "1";
+          buildAndTestSubdir = "rust";
+          postInstall = ''
+            mkdir -p $out/lib $out/include
+            for lib in libxattr_stream.a libxattr_stream${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}; do
+              found=$(find . -path "*/release/$lib" -not -path "*/deps/*" | head -n 1)
+              test -n "$found" || { echo "missing $lib" >&2; exit 1; }
+              cp "$found" $out/lib/
+            done
+            cp include/xattr_stream.h $out/include/
+          '';
+          meta = with pkgs.lib; {
+            description = "Cross-platform binary-safe file attributes: Rust library (same C ABI) and CLI";
+            license = licenses.mit;
+            platforms = platforms.linux ++ platforms.darwin;
+            mainProgram = "xattr-stream-rs";
+          };
+        };
+
         # Every supported target, cross-compiled from this host.
         cross = pkgs.stdenv.mkDerivation {
           pname = "xattr_stream-cross";
@@ -107,7 +139,7 @@
       {
         packages = {
           default = native;
-          inherit native cross;
+          inherit native cross rust;
         };
 
         checks = {
@@ -120,6 +152,12 @@
           test-cli = mkCheck "test-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils ] ''
             zig build
             bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
+          '';
+
+          # The Rust CLI through the same Bash suite (SKIPs inside the sandbox,
+          # which refuses setxattr; ./test runs it for real).
+          test-rust-cli = mkCheck "test-rust-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils ] ''
+            bash tests/cli/test_cli.sh ${rust}/bin/xattr-stream-rs
           '';
 
           # Cross-compilation must succeed for all six platforms (PF,
@@ -190,6 +228,7 @@
             jq
             luajit
             rustc
+            cargo
             bashInteractive
             coreutils
             gnugrep
