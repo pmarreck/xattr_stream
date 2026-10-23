@@ -40,6 +40,59 @@ assert_err_empty() { [[ -z "$err" ]] && pass || fail "expected empty stderr got 
 
 os_name() { uname -s; }
 
+# Windows conventions follow the effective platform: the OS environment
+# variable when it is linux, macos or mswin, else the platform the binary was
+# built for (so Windows' own OS=Windows_NT changes nothing). Under mswin, text
+# output ends lines with CRLF and switches may also be spelled /name.
+compiled_os="$(OS= "$BIN" --about)"
+compiled_os="${compiled_os##* for }"
+compiled_os="${compiled_os%%-*}"
+case "${OS:-}" in
+	linux|macos|mswin) eff_os="$OS" ;;
+	*) eff_os="$compiled_os" ;;
+esac
+
+# Every capture checks the line endings of the effective platform, then
+# normalizes CRLF to LF so each assertion below is written once for both.
+# `get` without --json writes raw value bytes, never translated, so its
+# stdout is left alone.
+eval "capture_raw() $(declare -f capture | tail -n +2)"
+check_eol() {
+	local -n s="$1"
+	if [[ "$2" == mswin ]]; then
+		local rest="${s//$'\r\n'/}"
+		[[ "$rest" != *$'\n'* ]] || fail "$1 has a line ending in bare LF under mswin: '$s'"
+		s="${s//$'\r\n'/$'\n'}"
+		s="${s%$'\r'}"
+	else
+		[[ "$s" != *$'\r'* ]] || fail "$1 has CR off Windows: '$s'"
+	fi
+}
+# The same check as a filter, for output read through a pipe: it removes the
+# CR of each CRLF under mswin, and marks any line that breaks the rule so the
+# assertion that follows fails.
+eol() {
+	if [[ "$eff_os" == mswin ]]; then
+		awk '{ if (sub(/\r$/, "")) print; else print $0 "<<bare LF>>" }'
+	else
+		awk '{ if (/\r/) print $0 "<<CR>>"; else print }'
+	fi
+}
+capture() {
+	capture_raw "$@"
+	local a got=0 json=0 os="$eff_os"
+	# `capture env OS=<value> "$BIN" ...` sets the platform for that call.
+	if [[ "${1:-}" == env && "${2:-}" == OS=* ]]; then
+		case "${2#OS=}" in linux|macos|mswin) os="${2#OS=}" ;; *) os="$compiled_os" ;; esac
+	fi
+	for a in "$@"; do
+		[[ "$a" == get ]] && got=1
+		[[ "$a" == --json || "$a" == /json ]] && json=1
+	done
+	[[ $got -eq 1 && $json -eq 0 ]] || check_eol out "$os"
+	check_eol err "$os"
+}
+
 # Native spelling of a logical name on this OS (mirrors names.zig for --raw tests).
 native_name() {
 	case "$(os_name)" in
@@ -492,7 +545,7 @@ mkdir -p "$fmt"
 printf 'one' | "$BIN" put "$fmt/plain" key
 printf 'a,b|c"d' | "$BIN" put "$fmt/we,ird|f" 'k,e_y'
 # Relative paths keep the expectations independent of the temp directory.
-run_in_tmp() { (cd "$tmpdir" && "$BIN" "$@"); }
+run_in_tmp() { (cd "$tmpdir" && "$BIN" "$@") | eol; return "${PIPESTATUS[0]}"; }
 out="$(run_in_tmp --tsv dump -r fmt)"; rc=$?
 assert_rc 0
 assert_out 'fmt/plain	key	one
@@ -858,6 +911,75 @@ if [[ "$(os_name)" == "Linux" ]]; then
 	assert_rc 1
 	assert_err_has "XS_INVALID_NAME"
 fi
+
+# Exact bytes, independent of the capture normalization above.
+current="line endings: CRLF exactly when the effective platform is mswin"
+f="$(new_file eol)"
+"$BIN" put "$f" k <<<"v" >/dev/null 2>&1
+for os in mswin linux macos Windows_NT ""; do
+	case "$os" in linux|macos|mswin) want="$os" ;; *) want="$compiled_os" ;; esac
+	if [[ "$want" == mswin ]]; then nl=$'\r\n'; else nl=$'\n'; fi
+	OS="$os" "$BIN" len "$f" k >"$tmpdir/eol.out" 2>/dev/null
+	cmp -s "$tmpdir/eol.out" <(printf '2%s' "$nl") && pass || fail "OS='$os': len should print 2 then $(printf '%q' "$nl")"
+	OS="$os" "$BIN" --help >"$tmpdir/eol.out" 2>/dev/null
+	lf="$(tr -cd '\n' <"$tmpdir/eol.out" | wc -c)"
+	crlf="$(grep -c $'\r$' "$tmpdir/eol.out")"
+	if [[ "$want" == mswin ]]; then
+		[[ "$lf" -gt 10 && "$crlf" -eq "$lf" ]] && pass || fail "OS='$os': every help line should end CRLF ($crlf of $lf)"
+	else
+		[[ "$lf" -gt 10 && "$crlf" -eq 0 ]] && pass || fail "OS='$os': help lines should end LF only ($crlf CR of $lf)"
+	fi
+	OS="$os" "$BIN" get "$f" nope >/dev/null 2>"$tmpdir/eol.err"
+	[[ "$(tail -c 2 "$tmpdir/eol.err" | od -An -tx1 | tr -d ' ')" == "$([[ "$want" == mswin ]] && echo 0d0a || echo "$(tail -c 2 "$tmpdir/eol.err" | head -c 1 | od -An -tx1 | tr -d ' ')0a")" ]] && pass || fail "OS='$os': stderr message line ending"
+	[[ "$want" == mswin ]] || { grep -q $'\r' "$tmpdir/eol.err" && fail "OS='$os': CR on stderr off Windows" || pass; }
+done
+
+current="line endings: raw get values are never translated"
+printf 'a\nb\r\nc\n' >"$tmpdir/eol.val"
+OS=mswin "$BIN" put "$f" raw <"$tmpdir/eol.val" >/dev/null 2>&1
+OS=mswin "$BIN" get "$f" raw >"$tmpdir/eol.got" 2>/dev/null
+cmp -s "$tmpdir/eol.val" "$tmpdir/eol.got" && pass || fail "OS=mswin get must write the value's bytes unchanged"
+
+current="line endings: load accepts CRLF-terminated lines"
+: >"$tmpdir/crlf-load"
+(cd "$tmpdir" && printf '{"path":"crlf-load","xattrs":{"k":"v1"}}\r\n{"path":"crlf-load","xattrs":{"k2":"v2"}}\r\n' | "$BIN" load >/dev/null 2>&1); rc=$?
+assert_rc 0
+out=""; err=""; rc=0; capture "$BIN" get "$tmpdir/crlf-load" k2
+assert_out "v2"
+
+current="windows switches: /name spellings under mswin"
+d="$tmpdir/slash"; mkdir -p "$d/sub"; : >"$d/sub/g"
+printf vv | "$BIN" put "$d/sub/g" k >/dev/null 2>&1
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /json len "$d/sub/g" k
+assert_rc 0; assert_out '{"len":2}'
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" '/?'
+assert_rc 0; [[ "$out" == *"Usage"* ]] && pass || fail "/? should print help"
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /h
+assert_rc 0; [[ "$out" == *"Usage"* ]] && pass || fail "/h should print help"
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /about
+assert_rc 0; [[ "$out" == *" for "* ]] && pass || fail "/about should print the about line"
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /r /depth:2 /tsv lst "$d"
+assert_rc 0; [[ "$out" == *"sub/g"* || "$out" == *'sub\g'* ]] && pass || fail "/r /depth:2 should reach sub/g: '$out'"
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /depth=1 /r /tsv lst "$d"
+assert_rc 0; [[ "$out" != *"g"$'\t'* ]] && pass || fail "/depth=1 should not reach sub/g: '$out'"
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /limit:1 put "$d/sub/g" k2 <<<"toolong"
+assert_rc 6
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /w:5 /cols:3,4 lst "$d/sub/g"
+assert_rc 0
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" /bogus len "$d/sub/g" k
+assert_rc 2; assert_err_has "unknown option '/bogus'"
+# A name with a path separator is a path, as is anything after --.
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" len "$d/sub/g" k
+assert_rc 0; assert_out "2"
+out=""; err=""; rc=0; capture env OS=mswin "$BIN" len -- /json k
+assert_rc 7
+# Off Windows, /name is an ordinary positional argument.
+out=""; err=""; rc=0; capture env OS=linux "$BIN" /about
+assert_rc 2; assert_err_has "unknown command '/about'"
+
+current="--limit=N spelling"
+out=""; err=""; rc=0; capture "$BIN" --limit=1 put "$d/sub/g" k3 <<<"toolong"
+assert_rc 6
 
 echo "CLI tests: $passes passed, $failures failed, $not_applicable not applicable on this platform"
 

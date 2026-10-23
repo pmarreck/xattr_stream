@@ -43,6 +43,9 @@ esac
 step "zig build test" zig build test
 step "zig build" zig build --prefix "$OUT"
 step "cli (bash)" bash tests/cli/test_cli.sh "$OUT/bin/xattr-stream"
+# The same suite with Windows conventions simulated (CRLF, /name switches).
+step "cli (bash), OS=mswin" env OS=mswin bash tests/cli/test_cli.sh "$OUT/bin/xattr-stream"
+step "cli conventions smoke (also run on the Windows runners)" bash tests/cli/conventions_smoke.sh "$OUT/bin/xattr-stream"
 step "debug banner: release build is silent" bash tests/cli/debug_banner.sh "$OUT/bin/xattr-stream" release
 debug_cli() {
 	zig build -Doptimize=Debug --prefix "zig-out/$pf/Debug" && bash tests/cli/debug_banner.sh "zig-out/$pf/Debug/bin/xattr-stream" debug
@@ -149,9 +152,12 @@ if have cargo; then
 	step "rust: cargo test" rust_unit
 	step "rust: cargo build" rust_build
 	step "rust: cli (bash)" bash tests/cli/test_cli.sh "$RS/xattr-stream-rs"
+	step "rust: cli (bash), OS=mswin" env OS=mswin bash tests/cli/test_cli.sh "$RS/xattr-stream-rs"
+	step "rust: cli conventions smoke" bash tests/cli/conventions_smoke.sh "$RS/xattr-stream-rs"
 	step "rust: debug banner: release build is silent" bash tests/cli/debug_banner.sh "$RS/xattr-stream-rs" release
 	step "rust: debug banner: debug build announces itself" rust_debug_cli
 	step "rust: differential against the C CLI" bash tests/cli/differential.sh "$OUT/bin/xattr-stream" "$RS/xattr-stream-rs"
+	step "rust: differential against the C CLI, OS=mswin" env OS=mswin bash tests/cli/differential.sh "$OUT/bin/xattr-stream" "$RS/xattr-stream-rs"
 	have clang && step "rust: consumer: C over the Rust library" consumer_c_over_rust
 	have luajit && step "rust: consumer: LuaJIT over the Rust library" consumer_luajit_over_rust
 fi

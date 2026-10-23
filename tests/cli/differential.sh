@@ -196,6 +196,20 @@ len t "$(printf 'bad\x1fname')"
 --raw --json lst -r t
 -- lst --json
 lst -- --json
+/json lst t
+'/?'
+/h
+/r /depth:1 /tsv lst t
+/limit:5 get t k
+/limit=x lst t
+/cols:3,4 dump t
+/w: dump t
+/bogus lst t
+/ lst t
+lst /json
+lst -- /json
+--limit=5 get t k
+--limit= lst t
 get nope k
 --json len nope k
 del nope k

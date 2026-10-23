@@ -41,10 +41,18 @@ jobs:
         run: zig build test --summary all
       - name: Build library and CLI
         run: zig build
+      - name: C CLI line endings and switch spelling (native, OS=Windows_NT)
+        shell: bash
+        run: bash tests/cli/conventions_smoke.sh zig-out/bin/xattr-stream.exe
       - uses: dtolnay/rust-toolchain@stable
       - name: Rust implementation, unit and integration tests
         working-directory: rust
         run: cargo test --release
+      - name: Rust CLI line endings and switch spelling (native, OS=Windows_NT)
+        shell: bash
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml
+          bash tests/cli/conventions_smoke.sh rust/target/release/xattr-stream-rs.exe
       # Zig 0.16.0's own aarch64-windows compiler crashes with an access
       # violation (0xC0000005) before compiling anything, so the ARM job runs
       # test executables cross-compiled here instead of compiling natively.
@@ -71,6 +79,11 @@ jobs:
       - name: Rust implementation, unit and integration tests (native)
         working-directory: rust
         run: cargo test --release
+      - name: Rust CLI line endings and switch spelling (native, OS=Windows_NT)
+        shell: bash
+        run: |
+          cargo build --release --manifest-path rust/Cargo.toml
+          bash tests/cli/conventions_smoke.sh rust/target/release/xattr-stream-rs.exe
       - uses: actions/download-artifact@v4
         with:
           name: arm64-windows-tests

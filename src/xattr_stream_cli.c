@@ -27,6 +27,116 @@
 #define STDOUT_IS_TTY() isatty(STDOUT_FILENO)
 #endif
 
+#include <stdarg.h>
+
+/*
+ * Windows conventions: text lines end with CRLF and switches may also be
+ * spelled /name. They apply on the effective platform mswin, which is the OS
+ * environment variable when it names a platform (linux, macos or mswin), else
+ * the one this binary was built for. Windows itself sets OS=Windows_NT, which
+ * names none, so a Windows build stays mswin and other builds can simulate it.
+ */
+static int g_windows;
+
+static int effective_windows(void) {
+	const char *os = getenv("OS");
+	if (os && strcmp(os, "mswin") == 0) return 1;
+	if (os && (strcmp(os, "linux") == 0 || strcmp(os, "macos") == 0)) return 0;
+#ifdef _WIN32
+	return 1;
+#else
+	return 0;
+#endif
+}
+
+/*
+ * All text reaches stdout and stderr through text_write, which turns each LF
+ * into CRLF under Windows conventions. The stdio calls are redefined below to
+ * go through it, so no call site can bypass it by accident; the raw value
+ * bytes of `get` are written with raw_write, which calls the real fwrite.
+ * Both streams are in binary mode on Windows, so the C runtime adds nothing.
+ */
+static void text_write(FILE *f, const void *data, size_t n) {
+	const char *s = data;
+	size_t start = 0;
+	if (g_windows) {
+		for (size_t i = 0; i < n; i++) {
+			if (s[i] != '\n') continue;
+			fwrite(s + start, 1, i - start, f);
+			fwrite("\r\n", 1, 2, f);
+			start = i + 1;
+		}
+	}
+	fwrite(s + start, 1, n - start, f);
+}
+
+static int text_fputc(int c, FILE *f) {
+	char ch = (char)c;
+	text_write(f, &ch, 1);
+	return ferror(f) ? EOF : (unsigned char)ch;
+}
+
+static int text_fputs(const char *s, FILE *f) {
+	text_write(f, s, strlen(s));
+	return ferror(f) ? EOF : 0;
+}
+
+static int text_puts(const char *s) {
+	text_fputs(s, stdout);
+	return text_fputc('\n', stdout) == EOF ? EOF : 0;
+}
+
+static size_t text_fwrite(const void *p, size_t size, size_t count, FILE *f) {
+	text_write(f, p, size * count);
+	return ferror(f) ? 0 : count;
+}
+
+static int text_vfprintf(FILE *f, const char *fmt, va_list ap) {
+	char small[1024];
+	va_list again;
+	va_copy(again, ap);
+	int n = vsnprintf(small, sizeof small, fmt, ap);
+	if (n >= 0 && (size_t)n < sizeof small) {
+		text_write(f, small, (size_t)n);
+	} else if (n >= 0) {
+		char *big = malloc((size_t)n + 1);
+		if (big) {
+			vsnprintf(big, (size_t)n + 1, fmt, again);
+			text_write(f, big, (size_t)n);
+			free(big);
+		} else {
+			n = -1;
+		}
+	}
+	va_end(again);
+	return n;
+}
+
+__attribute__((format(printf, 2, 3)))
+static int text_fprintf(FILE *f, const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	int n = text_vfprintf(f, fmt, ap);
+	va_end(ap);
+	return n;
+}
+
+__attribute__((format(printf, 1, 2)))
+static int text_printf(const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+	int n = text_vfprintf(stdout, fmt, ap);
+	va_end(ap);
+	return n;
+}
+
+#define fputc(...) text_fputc(__VA_ARGS__)
+#define fputs(...) text_fputs(__VA_ARGS__)
+#define puts(...) text_puts(__VA_ARGS__)
+#define fwrite(...) text_fwrite(__VA_ARGS__)
+#define fprintf(...) text_fprintf(__VA_ARGS__)
+#define printf(...) text_printf(__VA_ARGS__)
+
 /* 256-color ANSI: names in bright orange, values in light blue. */
 #define ANSI_NAME "\x1b[38;5;208m"
 #define ANSI_VALUE "\x1b[38;5;117m"
@@ -186,6 +296,9 @@ static void usage(FILE *out) {
 		"file's attributes in one 4 KiB block, which holds 3916 bytes of value next to\n"
 		"the longest valid name.\n"
 		"\n"
+		"Windows (or OS=mswin): lines end with CRLF, and options may also be written\n"
+		"/name, /name:value or /? (a path such as /dir then needs -- or \\dir).\n"
+		"\n"
 		"Exit codes: 0 ok, 1 error, 2 usage, 3 unsupported fs, 4 missing, 5 permission,\n"
 		"6 too large, 7 path not found, 8 invalid name/path.\n",
 		out);
@@ -303,9 +416,11 @@ static int read_stdin(uint64_t limit, unsigned char **out, size_t *out_len) {
 	return XS_OK;
 }
 
-static int write_all(FILE *out, const unsigned char *p, size_t len) {
+/* Raw bytes, never line-ending translated: the parenthesized name calls the
+ * real fwrite, not the text wrapper. */
+static int raw_write(FILE *out, const unsigned char *p, size_t len) {
 	while (len > 0) {
-		size_t n = fwrite(p, 1, len, out);
+		size_t n = (fwrite)(p, 1, len, out);
 		if (n == 0) return -1;
 		p += n;
 		len -= n;
@@ -357,7 +472,7 @@ static int cmd_get(const cli_opts *o, const char *path, const char *name) {
 		return exit_for(st);
 	}
 	SET_BINARY(stdout);
-	int rc = write_all(stdout, b.data, b.len);
+	int rc = raw_write(stdout, b.data, b.len);
 	xs_buffer_free(&b);
 	if (rc != 0) {
 		report(o, "get", "<stdout>", NULL, XS_IO);
@@ -1073,7 +1188,32 @@ static int cmd_load(const cli_opts *o, const char *file) {
 	return c.failures ? EXIT_ERROR : EXIT_OK;
 }
 
+/*
+ * Windows switch spelling: /name or /x, with an optional value after : or =,
+ * is the same as --name or -x (value after =); /? is -h. A name holding a
+ * path separator is a path, so /tmp/f stays positional; a one-component path
+ * such as /json needs -- or a backslash. Returns NULL for anything else, or a
+ * process-lifetime copy in dash spelling.
+ */
+static char *slash_switch(const char *a) {
+	if (a[0] != '/' || a[1] == '\0') return NULL;
+	const char *name = strcmp(a, "/?") == 0 ? "h" : a + 1;
+	size_t n = strcspn(name, ":=");
+	if (n == 0 || memchr(name, '/', n) || memchr(name, '\\', n)) return NULL;
+	const char *dashes = n == 1 ? "-" : "--";
+	size_t len = strlen(dashes) + strlen(name) + 1;
+	char *s = malloc(len);
+	if (!s) return NULL;
+	snprintf(s, len, "%s%.*s%s%s", dashes, (int)n, name, name[n] ? "=" : "", name[n] ? name + n + 1 : "");
+	return s;
+}
+
 int main(int argc, char **argv) {
+	g_windows = effective_windows();
+#ifdef _WIN32
+	SET_BINARY(stdout);
+	SET_BINARY(stderr);
+#endif
 #ifdef XS_DEBUG_BUILD
 	/* A debug build says so, so nobody benchmarks or ships one by mistake.
 	 * MUTE_DEBUG_STATUS (any non-empty value) silences it. */
@@ -1096,6 +1236,10 @@ int main(int argc, char **argv) {
 
 	for (int i = 1; i < argc; i++) {
 		const char *a = argv[i];
+		if (!only_positional && g_windows) {
+			char *dash = slash_switch(a);
+			if (dash) a = dash;
+		}
 		if (!only_positional && a[0] == '-' && a[1] != '\0') {
 			if (strcmp(a, "--") == 0) { only_positional = 1; continue; }
 			if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) { usage(stdout); return EXIT_OK; }
@@ -1187,15 +1331,18 @@ int main(int argc, char **argv) {
 				o.recurse = 1;
 				continue;
 			}
-			if (strcmp(a, "--limit") == 0) {
-				if (i + 1 >= argc || parse_u64(argv[++i], &o.xs.max_value_len) != 0) {
+			if (strcmp(a, "--limit") == 0 || strncmp(a, "--limit=", 8) == 0) {
+				const char *num = strchr(a, '=');
+				if (num) num++;
+				else if (i + 1 < argc) num = argv[++i];
+				if (parse_u64(num, &o.xs.max_value_len) != 0) {
 					fprintf(stderr, PROG ": --limit needs a non-negative integer\n");
 					usage(stderr);
 					return EXIT_USAGE;
 				}
 				continue;
 			}
-			fprintf(stderr, PROG ": unknown option '%s'\n", a);
+			fprintf(stderr, PROG ": unknown option '%s'\n", argv[i]);
 			usage(stderr);
 			return EXIT_USAGE;
 		}

@@ -80,6 +80,9 @@ const USAGE: &str = concat!(
 	"file's attributes in one 4 KiB block, which holds 3916 bytes of value next to\n",
 	"the longest valid name.\n",
 	"\n",
+	"Windows (or OS=mswin): lines end with CRLF, and options may also be written\n",
+	"/name, /name:value or /? (a path such as /dir then needs -- or \\dir).\n",
+	"\n",
 	"Exit codes: 0 ok, 1 error, 2 usage, 3 unsupported fs, 4 missing, 5 permission,\n",
 	"6 too large, 7 path not found, 8 invalid name/path.\n",
 );
@@ -163,10 +166,63 @@ fn explain(st: i32) -> &'static str {
 	}
 }
 
+/// Windows conventions: text lines end with CRLF and switches may also be
+/// spelled /name. They apply on the effective platform mswin: the OS
+/// environment variable when it names a platform (linux, macos or mswin),
+/// else the one this binary was built for. Windows itself sets
+/// OS=Windows_NT, which names none, so a Windows build stays mswin and other
+/// builds can simulate it. Decided once, at startup.
+static WINDOWS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn windows() -> bool {
+	*WINDOWS.get_or_init(|| match std::env::var_os("OS").as_deref().and_then(|v| v.to_str()) {
+		Some("mswin") => true,
+		Some("linux" | "macos") => false,
+		_ => cfg!(windows),
+	})
+}
+
+/// Text output: each LF becomes CRLF under Windows conventions. Every text
+/// write goes through text_stdout or text_stderr; only the raw value bytes of
+/// `get` use raw_stdout. A test below pins those three as the only places
+/// that open the streams.
+struct Text<W: Write>(W);
+
+impl<W: Write> Write for Text<W> {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		if !windows() {
+			return self.0.write(buf);
+		}
+		for (k, line) in buf.split(|&c| c == b'\n').enumerate() {
+			if k > 0 {
+				self.0.write_all(b"\r\n")?;
+			}
+			self.0.write_all(line)?;
+		}
+		Ok(buf.len())
+	}
+
+	fn flush(&mut self) -> io::Result<()> {
+		self.0.flush()
+	}
+}
+
+fn text_stdout() -> Text<io::StdoutLock<'static>> {
+	Text(io::stdout().lock())
+}
+
+fn text_stderr() -> Text<io::Stderr> {
+	Text(io::stderr())
+}
+
+fn raw_stdout() -> io::StdoutLock<'static> {
+	io::stdout().lock()
+}
+
 /// Writes a whole message to stderr in one call, as the C CLI's unbuffered
 /// stderr does line by line.
 fn eput(bytes: &[u8]) {
-	let _ = io::stderr().write_all(bytes);
+	let _ = text_stderr().write_all(bytes);
 }
 
 fn json_string(out: &mut Vec<u8>, s: &[u8]) {
@@ -302,7 +358,7 @@ fn cmd_get(o: &Cli, path: &[u8], name: &[u8]) -> i32 {
 			return exit_for(status(e));
 		}
 	};
-	let mut out = io::stdout().lock();
+	let mut out = raw_stdout();
 	if out.write_all(&v).and_then(|()| out.flush()).is_err() {
 		report(o, "get", Some(b"<stdout>"), None, Status::Io.code());
 		return EXIT_ERROR;
@@ -324,7 +380,7 @@ fn cmd_len(o: &Cli, path: &[u8], name: &[u8]) -> i32 {
 }
 
 fn println_out(line: &[u8]) -> i32 {
-	let mut out = io::stdout().lock();
+	let mut out = text_stdout();
 	match out.write_all(line).and_then(|()| out.write_all(b"\n")).and_then(|()| out.flush()) {
 		Ok(()) => EXIT_OK,
 		Err(_) => EXIT_ERROR,
@@ -797,7 +853,7 @@ fn cmd_lst(o: &mut Cli, path: &[u8]) -> i32 {
 			k += 1;
 		}
 	}
-	let mut c = Lst { o, out: BufWriter::new(io::stdout().lock()), json_first: true, failures: 0, present, width };
+	let mut c = Lst { o, out: BufWriter::new(text_stdout()), json_first: true, failures: 0, present, width };
 	let framed = !o.json && matches!(o.fmt, Fmt::Table | Fmt::Md);
 	// Names-only listings stay a JSON array.
 	let json_array = o.json && !o.values;
@@ -1062,6 +1118,27 @@ fn opt_value(a: &[u8], args: &[Vec<u8>], i: &mut usize) -> Option<Vec<u8>> {
 	None
 }
 
+/// Windows switch spelling: /name or /x, with an optional value after : or =,
+/// is the same as --name or -x (value after =); /? is -h. A name holding a
+/// path separator is a path, so /tmp/f stays positional; a one-component path
+/// such as /json needs -- or a backslash. None for anything else.
+fn slash_switch(a: &[u8]) -> Option<Vec<u8>> {
+	let rest = a.strip_prefix(b"/").filter(|r| !r.is_empty())?;
+	let rest: &[u8] = if rest == b"?" { b"h" } else { rest };
+	let n = rest.iter().position(|&c| c == b':' || c == b'=').unwrap_or(rest.len());
+	let name = &rest[..n];
+	if name.is_empty() || name.iter().any(|&c| c == b'/' || c == b'\\') {
+		return None;
+	}
+	let mut s = if n == 1 { b"-".to_vec() } else { b"--".to_vec() };
+	s.extend_from_slice(name);
+	if n < rest.len() {
+		s.push(b'=');
+		s.extend_from_slice(&rest[n + 1..]);
+	}
+	Some(s)
+}
+
 fn run() -> i32 {
 	let args: Vec<Vec<u8>> = std::env::args_os().skip(1).map(|a| arg_bytes(&a)).collect();
 	let mut o = Cli {
@@ -1090,12 +1167,13 @@ fn run() -> i32 {
 	let mut only_positional = false;
 	let mut i = 0;
 	while i < args.len() {
-		let a = args[i].as_slice();
+		let dash = if !only_positional && windows() { slash_switch(&args[i]) } else { None };
+		let a = dash.as_deref().unwrap_or(args[i].as_slice());
 		if !only_positional && a.len() > 1 && a[0] == b'-' {
 			match a {
 				b"--" => only_positional = true,
 				b"--help" | b"-h" => {
-					let _ = io::stdout().write_all(USAGE.as_bytes());
+					let _ = text_stdout().write_all(USAGE.as_bytes());
 					return EXIT_OK;
 				}
 				b"--version" => return println_out(format!("{PROG} {}", xs::VERSION).as_bytes()),
@@ -1164,14 +1242,8 @@ fn run() -> i32 {
 						}
 					}
 				}
-				b"--limit" => {
-					let v = if i + 1 < args.len() {
-						i += 1;
-						parse_u64(Some(&args[i]))
-					} else {
-						None
-					};
-					match v {
+				_ if a == b"--limit" || a.starts_with(b"--limit=") => {
+					match parse_u64(opt_value(a, &args, &mut i).as_deref()) {
 						Some(n) => o.limit = n,
 						None => {
 							eput(format!("{PROG}: --limit needs a non-negative integer\n").as_bytes());
@@ -1181,7 +1253,7 @@ fn run() -> i32 {
 				}
 				_ => {
 					let mut m = format!("{PROG}: unknown option '").into_bytes();
-					m.extend_from_slice(a);
+					m.extend_from_slice(&args[i]);
 					m.extend_from_slice(b"'\n");
 					eput(&m);
 					return usage_err();
@@ -1268,6 +1340,33 @@ mod tests {
 			assert_eq!(parse_u64(Some(bad)), None, "{}", String::from_utf8_lossy(bad));
 		}
 		assert_eq!(parse_u64(None), None);
+	}
+
+	#[test]
+	fn slash_switches_map_to_dash_spellings_and_paths_stay_positional() {
+		let s = |a: &str| slash_switch(a.as_bytes()).map(|v| String::from_utf8(v).unwrap());
+		assert_eq!(s("/json").as_deref(), Some("--json"));
+		assert_eq!(s("/r").as_deref(), Some("-r"));
+		assert_eq!(s("/?").as_deref(), Some("-h"));
+		assert_eq!(s("/w:5").as_deref(), Some("-w=5"));
+		assert_eq!(s("/cols=3,4").as_deref(), Some("--cols=3,4"));
+		assert_eq!(s("/root:C:\\dir").as_deref(), Some("--root=C:\\dir"));
+		for path in ["/", "/tmp/f", "/a\\b", "/:x", "json", "--json", ""] {
+			assert_eq!(s(path), None, "{path}");
+		}
+	}
+
+	/// Text must reach the terminal only through the line-ending translation,
+	/// so the streams are opened in exactly three places (plus the terminal
+	/// check); anything new has to choose text or raw on purpose.
+	#[test]
+	fn standard_streams_are_opened_only_by_the_text_and_raw_helpers() {
+		let src = include_str!("main.rs");
+		let opened = |pat: &str| src.matches(pat).count();
+		// concat! keeps the patterns themselves out of the count.
+		assert_eq!(opened(concat!("io::", "stdout()")), 3, "stdout opened outside text_stdout, raw_stdout and the terminal check");
+		assert_eq!(opened(concat!("io::", "stderr()")), 1, "stderr opened outside text_stderr");
+		assert_eq!(opened(concat!("print", "!(")) + opened(concat!("println", "!(")) + opened(concat!("eprint", "ln!(")), 0);
 	}
 
 	#[test]

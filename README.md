@@ -152,6 +152,24 @@ $ xattr-stream --table --cols 20,10,12 dump -r photos
 ```
 
 Options go anywhere; later options override earlier ones; `--` ends options.
+
+On Windows, text output (listings, JSON, help and errors on stderr) ends
+lines with CRLF. The raw bytes `get` writes are never changed, and `load`
+accepts LF or CRLF lines. Options may also be spelled the Windows way:
+`/json`, `/r`, `/depth:2` or `/depth=2`, `/?`. A `/` argument counts as a
+switch only when its name has no path separator, so `/tmp/f` stays a path;
+a one-component path such as `/json` then needs `--` or `\json`. Git Bash
+rewrites leading-slash arguments into Windows paths before a program sees
+them, so `/name` switches work as written from `cmd` and PowerShell, while
+Git Bash needs `MSYS_NO_PATHCONV=1`. Elsewhere `/name` is an ordinary
+argument and lines end with LF.
+
+The `OS` environment variable selects these conventions on any build:
+`linux`, `macos` or `mswin`. Any other value, including Windows' own
+`Windows_NT`, leaves the platform the binary was built for. The test suite
+uses `OS=mswin` to run every CLI test with Windows conventions on Linux and
+macOS. Path separators and file system behavior still come from the real
+OS.
 Exit codes: 0 ok, 1 error, 2 usage, 3 unsupported filesystem, 4 missing
 attribute, 5 permission or read-only, 6 too large, 7 path not found,
 8 invalid name or path. Every error names its status on stderr, for example
