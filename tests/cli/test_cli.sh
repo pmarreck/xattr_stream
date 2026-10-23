@@ -45,7 +45,7 @@ os_name() { uname -s; }
 # built for (so Windows' own OS=Windows_NT changes nothing). Under mswin, text
 # output ends lines with CRLF and switches may also be spelled /name.
 compiled_os="$(OS= "$BIN" --about)"
-compiled_os="${compiled_os##* for }"
+compiled_os="${compiled_os##* PF=}"
 compiled_os="${compiled_os%%-*}"
 case "${OS:-}" in
 	linux|macos|mswin) eff_os="$OS" ;;
@@ -150,8 +150,20 @@ out=""; err=""; rc=0; capture "$BIN" --about
 assert_rc 0
 [[ "$(printf '%s' "$out" | wc -l)" -eq 0 ]] && pass || fail "--about must be one line"
 [[ "$out" == *"xattr-stream"* && "$out" =~ [0-9]+\.[0-9]+\.[0-9]+ ]] && pass || fail "--about missing name/version: '$out'"
-# The platform name (PF) comes from uname, independently of the binary.
-[[ "$out" == *" for $(host_pf)" ]] && pass || fail "--about should end with the platform 'for $(host_pf)': '$out'"
+# The platform name (PF) comes from uname, independently of the binary. On
+# Linux the C library variant comes from the executable's own ELF header: a
+# glibc loader means gnu, a static or musl-loaded binary means musl. Other
+# platforms report no variant.
+case "$(host_pf)" in
+	linux-*)
+		case "$(file -L "$BIN")" in
+			*ld-linux*) want_variant=" VARIANT=gnu" ;;
+			*"statically linked"*|*ld-musl*) want_variant=" VARIANT=musl" ;;
+			*) want_variant=" VARIANT=unknown" ;;
+		esac ;;
+	*) want_variant="" ;;
+esac
+[[ "$out" == *" PF=$(host_pf)$want_variant" ]] && pass || fail "--about should end with 'PF=$(host_pf)$want_variant': '$out'"
 
 current="usage errors"
 out=""; err=""; rc=0; capture "$BIN"
@@ -957,7 +969,7 @@ assert_rc 0; [[ "$out" == *"Usage"* ]] && pass || fail "/? should print help"
 out=""; err=""; rc=0; capture env OS=mswin "$BIN" /h
 assert_rc 0; [[ "$out" == *"Usage"* ]] && pass || fail "/h should print help"
 out=""; err=""; rc=0; capture env OS=mswin "$BIN" /about
-assert_rc 0; [[ "$out" == *" for "* ]] && pass || fail "/about should print the about line"
+assert_rc 0; [[ "$out" == *" PF="* ]] && pass || fail "/about should print the about line"
 out=""; err=""; rc=0; capture env OS=mswin "$BIN" /r /depth:2 /tsv lst "$d"
 assert_rc 0; [[ "$out" == *"sub/g"* || "$out" == *'sub\g'* ]] && pass || fail "/r /depth:2 should reach sub/g: '$out'"
 out=""; err=""; rc=0; capture env OS=mswin "$BIN" /depth=1 /r /tsv lst "$d"

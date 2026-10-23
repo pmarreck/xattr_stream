@@ -34,7 +34,13 @@
         pkgs = nixpkgs.legacyPackages.${system};
         zig = zig-overlay.packages.${system}."0.16.0";
         version = "0.2.0";
-        src = pkgs.lib.cleanSource ./.;
+        # Package sources leave out CANONICAL_IMPL, which only tells ./build
+        # which CLI to publish, so `./build canonize` rebuilds nothing (see
+        # checks.selector-outside-sources).
+        src = pkgs.lib.cleanSourceWith {
+          src = pkgs.lib.cleanSource ./.;
+          filter = path: type: path != toString ./CANONICAL_IMPL;
+        };
 
         # Zig dependencies (printable_binary) are fetched once into a
         # fixed-output derivation, then copied into the sandboxed builds'
@@ -44,8 +50,7 @@
         zigDepsHash = "sha256-O4+b9IpGkTklHLoSrH8ICWMYOIdTAw8nhhjkLAL7Ufw=";
         zigDeps = pkgs.stdenv.mkDerivation {
           pname = "xattr_stream-zig-deps";
-          inherit version;
-          src = ./.;
+          inherit version src;
           nativeBuildInputs = [ zig pkgs.cacert ];
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
@@ -70,6 +75,19 @@
           cp -r ${zigDeps}/. $ZIG_GLOBAL_CACHE_DIR/
           chmod -R u+w $ZIG_GLOBAL_CACHE_DIR
           ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "unset NIX_CFLAGS_COMPILE NIX_LDFLAGS"}
+          # zig build sizes its job pool to every CPU rather than this
+          # builder's share (NIX_BUILD_CORES), so several builds at once can
+          # exhaust the daemon's task limit ("failed to spawn ...:
+          # SystemResources"). Exported, so test scripts' builds obey it too.
+          zig() {
+            if [ "$1" = build ] && [ "''${NIX_BUILD_CORES:-0}" -gt 0 ]; then
+              shift
+              command zig build -j"$NIX_BUILD_CORES" "$@"
+            else
+              command zig "$@"
+            fi
+          }
+          export -f zig
         '';
 
         mkCheck = name: extraInputs: script: pkgs.stdenv.mkDerivation {
@@ -161,6 +179,9 @@
           mswin-amd64 = "x86_64-pc-windows-gnu";
           mswin-arm64 = "aarch64-pc-windows-gnullvm";
         };
+        # Product tree of one platform: <PF>/[musl/]release, the musl
+        # directory naming the Linux C library (as zig build cross does).
+        rustTree = pf: "${pf}${pkgs.lib.optionalString (pkgs.lib.hasPrefix "linux-" pf) "/musl"}/release";
         rustCrossToolchain = rust-overlay.packages.${system}.rust.override {
           targets = builtins.attrValues rustTargets;
         };
@@ -202,15 +223,70 @@
           '';
           installPhase = ''
             ${pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (pf: triple: ''
-              mkdir -p $out/${pf}/release/bin $out/${pf}/release/lib $out/${pf}/release/include
+              mkdir -p $out/${rustTree pf}/bin $out/${rustTree pf}/lib $out/${rustTree pf}/include
               for f in xattr-stream-rs xattr-stream-rs.exe libxattr_stream.a xattr_stream.lib libxattr_stream.so libxattr_stream.dylib xattr_stream.dll; do
                 p=target/${triple}/release/$f
                 test -f "$p" || continue
-                case "$f" in xattr-stream-rs*) cp "$p" $out/${pf}/release/bin/ ;; *) cp "$p" $out/${pf}/release/lib/ ;; esac
+                case "$f" in xattr-stream-rs*) cp "$p" $out/${rustTree pf}/bin/ ;; *) cp "$p" $out/${rustTree pf}/lib/ ;; esac
               done
-              cp ../include/xattr_stream.h $out/${pf}/release/include/
+              cp ../include/xattr_stream.h $out/${rustTree pf}/include/
             '') rustTargets)}
           '';
+        };
+        # Build-script checks run only on Linux, where the Nix sandbox is the
+        # write boundary; elsewhere nothing confines them (see ./test).
+        buildScriptChecks = {
+          # ./build's selection, scopes and publication against recording
+          # fakes of nix, zig, cargo and uname (no real build). The sandbox
+          # is the write boundary here; ./test confines it with Bubblewrap.
+          test-build-script = pkgs.runCommand "xattr_stream-test-build-script"
+            { nativeBuildInputs = [ pkgs.bashInteractive pkgs.coreutils pkgs.findutils pkgs.diffutils pkgs.gnused ]; } ''
+            cp -R ${src} project && chmod -R u+w project && patchShebangs project >/dev/null
+            bash project/tests/build/test_build.sh project
+            touch $out
+          '';
+          # The same ./build against the real packages: a shim stands in for
+          # nix, answering each attribute with the store path already built,
+          # so publication, the products' paths and the host check run on
+          # real products. Both canonical choices are published in turn.
+          test-build-real =
+            let
+              shim = pkgs.writeShellScript "nix" ''
+                case "$1 $2" in
+                  "build .#default") echo ${native} ;;
+                  "build .#cross") echo ${cross} ;;
+                  "build .#rust") echo ${rust} ;;
+                  "build .#rust-cross") echo ${rustCross} ;;
+                  "build /nix/store/"*) mkdir -p "$(dirname "$4")" && ln -sfn "$2" "$4" ;;
+                  *) echo "nix shim: unexpected: $*" >&2; exit 2 ;;
+                esac
+              '';
+            in
+            pkgs.runCommand "xattr_stream-test-build-real"
+              { nativeBuildInputs = [ pkgs.bashInteractive pkgs.coreutils pkgs.findutils pkgs.gnused ]; } ''
+              cp -R ${src} project && chmod -R u+w project && patchShebangs project >/dev/null
+              mkdir shim && ln -s ${shim} shim/nix
+              export PATH=$PWD/shim:$PATH
+              cd project
+              pf=$(bash -c 'source scripts/pf.bash && host_pf')
+              suffix=""; case $pf in linux-*) suffix=" VARIANT=musl" ;; esac
+              ./build canonize zig
+              ./build --all
+              about=$(bin/$pf/xattr-stream --about)
+              case "$about" in *"PF=$pf"$suffix) ;; *) echo "zig: $about" >&2; exit 1 ;; esac
+              case "$about" in *"Rust"*) echo "zig canonical but published: $about" >&2; exit 1 ;; esac
+              for p in linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64; do
+                e=bin/$p/xattr-stream; case $p in mswin-*) e=$e.exe ;; esac
+                test -f "$e" || { echo "missing or dangling $e" >&2; exit 1; }
+              done
+              test -x .nix-out/rust/$pf/$(case $pf in linux-*) echo gnu/ ;; esac)release/bin/xattr-stream-rs
+              ./build canonize rust
+              ./build
+              suffix=""; case $pf in linux-*) suffix=" VARIANT=gnu" ;; esac
+              about=$(bin/$pf/xattr-stream --about)
+              case "$about" in *"Rust implementation, PF=$pf"$suffix) ;; *) echo "rust: $about" >&2; exit 1 ;; esac
+              touch $out
+            '';
         };
       in
       {
@@ -221,20 +297,32 @@
         };
 
         checks = {
+          # CANONICAL_IMPL is tracked (Nix sees it) and holds a declared
+          # implementation, but stays out of the package sources, so changing
+          # it cannot rebuild a package.
+          selector-outside-sources = pkgs.runCommand "xattr_stream-selector-outside-sources" { } ''
+            test -e ${src}/build.zig
+            if test -e ${src}/CANONICAL_IMPL; then
+              echo "CANONICAL_IMPL is in the package sources; canonizing would rebuild every package" >&2
+              exit 1
+            fi
+            grep -qx -e zig -e rust ${./CANONICAL_IMPL} || { echo "CANONICAL_IMPL holds no declared implementation" >&2; exit 1; }
+            touch $out
+          '';
           # Zig unit + integration tests (real OS attribute calls on tmp fixtures).
           test-zig = mkCheck "test-zig" [ ] ''
             zig build test
           '';
 
           # The C CLI over the public header, driven by the Bash suite.
-          test-cli = mkCheck "test-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils ] ''
+          test-cli = mkCheck "test-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils pkgs.file ] ''
             zig build
             bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
           '';
 
           # The Rust CLI through the same Bash suite (declared unsupported
           # inside the sandbox, which refuses setxattr; ./test runs it for real).
-          test-rust-cli = mkCheck "test-rust-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils ] ''
+          test-rust-cli = mkCheck "test-rust-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils pkgs.file ] ''
             bash tests/cli/test_cli.sh ${rust}/bin/xattr-stream-rs
           '';
 
@@ -242,9 +330,9 @@
           # <OS>-<ARCH>) even though only the host can run them.
           test-cross = mkCheck "test-cross" [ ] ''
             zig build cross --prefix out
-            for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64; do
-              test -f out/$pf/ReleaseFast/bin/xattr-stream || { echo "missing CLI for $pf" >&2; exit 1; }
-              test -f out/$pf/ReleaseFast/lib/libxattr_stream.a || { echo "missing static lib for $pf" >&2; exit 1; }
+            for t in linux-amd64/musl linux-arm64/musl macos-amd64 macos-arm64; do
+              test -f out/$t/ReleaseFast/bin/xattr-stream || { echo "missing CLI for $t" >&2; exit 1; }
+              test -f out/$t/ReleaseFast/lib/libxattr_stream.a || { echo "missing static lib for $t" >&2; exit 1; }
             done
             for pf in mswin-amd64 mswin-arm64; do
               test -f out/$pf/ReleaseFast/bin/xattr-stream.exe || { echo "missing CLI for $pf" >&2; exit 1; }
@@ -293,10 +381,10 @@
               case "$got" in *"$want"*) ;; *) echo "$f: expected '$want', file says '$got'" >&2; exit 1 ;; esac
             }
             r=${rustCross}
-            check_header $r/linux-amd64/release/bin/xattr-stream-rs "ELF 64-bit LSB executable, x86-64"
-            check_header $r/linux-amd64/release/bin/xattr-stream-rs "statically linked"
-            check_header $r/linux-arm64/release/bin/xattr-stream-rs "ELF 64-bit LSB executable, ARM aarch64"
-            check_header $r/linux-arm64/release/bin/xattr-stream-rs "statically linked"
+            check_header $r/linux-amd64/musl/release/bin/xattr-stream-rs "ELF 64-bit LSB executable, x86-64"
+            check_header $r/linux-amd64/musl/release/bin/xattr-stream-rs "statically linked"
+            check_header $r/linux-arm64/musl/release/bin/xattr-stream-rs "ELF 64-bit LSB executable, ARM aarch64"
+            check_header $r/linux-arm64/musl/release/bin/xattr-stream-rs "statically linked"
             check_header $r/macos-amd64/release/bin/xattr-stream-rs "Mach-O 64-bit x86_64 executable"
             check_header $r/macos-arm64/release/bin/xattr-stream-rs "Mach-O 64-bit arm64 executable"
             check_header $r/mswin-amd64/release/bin/xattr-stream-rs.exe "PE32+ executable"
@@ -304,18 +392,19 @@
             check_header $r/mswin-arm64/release/bin/xattr-stream-rs.exe "PE32+ executable"
             check_header $r/mswin-arm64/release/bin/xattr-stream-rs.exe "(console), ARM64"
             for pf in linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64; do
-              test -s $r/$pf/release/lib/libxattr_stream.a || { echo "missing static lib for $pf" >&2; exit 1; }
-              test -f $r/$pf/release/include/xattr_stream.h || { echo "missing header for $pf" >&2; exit 1; }
+              t=$pf; case $pf in linux-*) t=$pf/musl ;; esac
+              test -s $r/$t/release/lib/libxattr_stream.a || { echo "missing static lib for $pf" >&2; exit 1; }
+              test -f $r/$t/release/include/xattr_stream.h || { echo "missing header for $pf" >&2; exit 1; }
             done
           '' + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
             run=""
             ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isAarch64 ''run="qemu-x86_64"''}
-            about=$($run $r/linux-amd64/release/bin/xattr-stream-rs --about)
-            case "$about" in *" for linux-amd64") ;; *) echo "linux-amd64 --about: $about" >&2; exit 1 ;; esac
+            about=$($run $r/linux-amd64/musl/release/bin/xattr-stream-rs --about)
+            case "$about" in *" PF=linux-amd64 VARIANT=musl") ;; *) echo "linux-amd64 --about: $about" >&2; exit 1 ;; esac
             run=""
             ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isx86_64 ''run="qemu-aarch64"''}
-            about=$($run $r/linux-arm64/release/bin/xattr-stream-rs --about)
-            case "$about" in *" for linux-arm64") ;; *) echo "linux-arm64 --about: $about" >&2; exit 1 ;; esac
+            about=$($run $r/linux-arm64/musl/release/bin/xattr-stream-rs --about)
+            case "$about" in *" PF=linux-arm64 VARIANT=musl") ;; *) echo "linux-arm64 --about: $about" >&2; exit 1 ;; esac
           '');
 
           # Independent compilers/runtimes consuming the C ABI.
@@ -362,7 +451,7 @@
           test-consumer-zig = mkCheck "test-consumer-zig" [ ] ''
             cd tests/consumers/zig && zig build test
           '';
-        };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux buildScriptChecks;
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
@@ -377,11 +466,14 @@
             coreutils
             gnugrep
             diffutils
-          ];
+            file
+          ]
+          # Confines the build-script tests (scripts/run-isolated).
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.bubblewrap ];
           shellHook = ''
             echo "xattr_stream dev shell (zig $(zig version))"
-            echo "  ./build       host library + CLI, commands linked into bin/<PF>/"
-            echo "  ./build-all   all six platforms, commands linked into bin/<PF>/"
+            echo "  ./build       canonical implementation (CANONICAL_IMPL), published in bin/<PF>/"
+            echo "  ./build --all both implementations, all six platforms (see ./build --help)"
             echo "  ./test        everything"
           '';
         };

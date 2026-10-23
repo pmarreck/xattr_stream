@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# Builds the host platform's library, header and CLI with all optimizations,
-# for both implementations, and links the commands into bin/<PF>/, where PF
-# is the platform name <OS>-<ARCH> (OS linux, macos or mswin; ARCH amd64 or
-# arm64): xattr-stream (C CLI, Zig core) and xattr-stream-rs (Rust).
-#   ./build          release via `nix build`, kept at .nix-out/<PF>/ReleaseFast and .nix-out/<PF>/rust-release
-#   ./build --debug  Debug builds via the dev shell (zig-out/<PF>/Debug, cargo's debug profile)
-#   ./build --test   ReleaseSafe via the dev shell (zig-out/<PF>/ReleaseSafe, cargo's release profile)
-# Without Nix: zig build --prefix zig-out/<PF>/ReleaseFast; cd rust && cargo build --release
+# Build entrypoint. Builds the canonical implementation (CANONICAL_IMPL) for
+# this platform and publishes its CLI as bin/<PF>/xattr-stream; flags widen
+# the scope to every implementation and every platform. `./build --help`
+# documents the commands and product trees. tests/build/test_build.sh pins
+# this behavior with recording fakes of the builders.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,63 +11,292 @@ cd "$ROOT" || exit 2
 # shellcheck source=scripts/pf.bash
 source "$ROOT/scripts/pf.bash"
 
+# The declared implementations and platforms. Every implementation builds
+# for every platform.
+IMPLS="zig rust"
+PLATFORMS="linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64"
+COMMAND="xattr-stream"
+
+usage() {
+	cat <<'USAGE'
+Usage: ./build [--debug | --test] [--all-impls] [--all-plats] [--all]
+       ./build canonize IMPL
+
+Builds the canonical implementation for this platform and publishes its CLI
+as bin/<PF>/xattr-stream, where PF is <OS>-<ARCH> (OS linux, macos or mswin;
+ARCH amd64 or arm64). The implementations are zig (Zig core with the C CLI)
+and rust. CANONICAL_IMPL names the canonical one.
+
+  canonize IMPL            record IMPL (zig or rust) in CANONICAL_IMPL; builds
+                           nothing and changes no published command
+  --all-impls, --all-implementations
+                           also build every other implementation (not published)
+  --all-plats, --all-platforms
+                           build for all six platforms (cross-compiled)
+  --all                    both of the above
+  --debug                  Debug build in the dev shell, this platform only
+  --test                   ReleaseSafe (Rust: release) build in the dev shell,
+                           this platform only
+  -h, --help               this help
+
+Release builds use nix build. Product trees, each with bin/, lib/, include/:
+  .nix-out/zig/<PF>/[musl/]ReleaseFast     .nix-out/zig/cross/<PF>/[musl/]ReleaseFast
+  .nix-out/rust/<PF>/[gnu/]release         .nix-out/rust/cross/<PF>/[musl/]release
+  zig-out/<PF>/[musl/]<Debug|ReleaseSafe>  rust-out/<PF>/[gnu/]<debug|release>
+The musl and gnu directories name the Linux C library; other platforms have
+none. A failed build or check leaves the previous bin/<PF>/ entry in place.
+
+Without Nix: zig build --prefix zig-out/<PF>/[musl/]ReleaseFast, and
+cargo build --release --manifest-path rust/Cargo.toml.
+USAGE
+}
+
+die() {
+	echo "build: $*" >&2
+	exit 2
+}
+
+is_impl() {
+	local i
+	for i in $IMPLS; do [[ "$1" == "$i" ]] && return 0; done
+	return 1
+}
+
+# read_selection: the identifier in CANONICAL_IMPL, which must be exactly one
+# declared implementation, optionally followed by one LF. The file is data:
+# it is never sourced or evaluated.
+read_selection() {
+	local raw
+	[[ -f CANONICAL_IMPL ]] || die "no CANONICAL_IMPL; choose an implementation with ./build canonize IMPL (one of: $IMPLS)"
+	# Only lowercase letters and LF may appear, which also keeps NUL bytes
+	# out of the shell variable below.
+	[[ "$(LC_ALL=C tr -d 'a-z\n' <CANONICAL_IMPL | wc -c)" -eq 0 ]] || die "CANONICAL_IMPL must hold one of: $IMPLS (and at most one newline)"
+	raw="$(cat CANONICAL_IMPL && printf .)" || die "cannot read CANONICAL_IMPL"
+	raw="${raw%.}"
+	raw="${raw%$'\n'}"
+	is_impl "$raw" || die "CANONICAL_IMPL must hold one of: $IMPLS (and at most one newline)"
+	printf '%s' "$raw"
+}
+
+# canonize IMPL: validates IMPL, then writes CANONICAL_IMPL atomically unless
+# it already selects IMPL. No builder runs and bin/ is not touched.
+canonize() {
+	local current="" tmp
+	[[ $# -eq 1 ]] || die "usage: ./build canonize IMPL, where IMPL is one of: $IMPLS"
+	is_impl "$1" || die "unknown implementation '$1'; declared: $IMPLS"
+	[[ -f CANONICAL_IMPL ]] && current="$(read_selection 2>/dev/null)"
+	if [[ "$current" != "$1" ]]; then
+		tmp="CANONICAL_IMPL.tmp.$$"
+		printf '%s\n' "$1" >"$tmp" && mv -f "$tmp" CANONICAL_IMPL || exit 1
+	fi
+	echo "$1 implementation canonized. Rerun ./build to rebuild."
+}
+
+if [[ "${1:-}" == canonize ]]; then
+	shift
+	canonize "$@"
+	exit
+fi
+
 mode="release"
+all_impls=0
+all_plats=0
 for arg in "$@"; do
 	case "$arg" in
 		--debug) mode="debug" ;;
 		--test) mode="safe" ;;
-		-h|--help)
-			sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
-			exit 0
-			;;
-		*) echo "build: unknown argument '$arg'" >&2; exit 2 ;;
+		--all-impls|--all-implementations) all_impls=1 ;;
+		--all-plats|--all-platforms) all_plats=1 ;;
+		--all) all_impls=1; all_plats=1 ;;
+		-h|--help) usage; exit 0 ;;
+		*) die "unknown argument '$arg' (see ./build --help)" ;;
 	esac
 done
-
-pf="$(host_pf)" || { echo "build: unsupported host platform: $(uname -sm)" >&2; exit 2; }
-
-# Points bin/<PF>/<command> at the product tree, only after a successful
-# build, so a failed build leaves the previous working command in place.
-# Windows gets copies: symlinks there need extra privileges.
-# $1: product directory holding the command, $2: the command. Relative
-# links for products inside the repository, absolute ones otherwise (a
-# CARGO_TARGET_DIR elsewhere).
-publish() {
-	local dir="$1" cmd="$2" exe="" target
-	[[ "$pf" == mswin-* ]] && exe=".exe"
-	mkdir -p "bin/$pf"
-	if [[ -n "$exe" ]]; then
-		cp -f "$dir/$cmd$exe" "bin/$pf/$cmd$exe" || return 1
-	else
-		case "$dir" in
-			/*) target="$dir/$cmd" ;;
-			*) target="../../$dir/$cmd" ;;
-		esac
-		ln -sfn "$target" "bin/$pf/$cmd" || return 1
-	fi
-	echo "built: bin/$pf/$cmd$exe -> $dir/$cmd$exe"
-}
-
-cargo_dir="${CARGO_TARGET_DIR:-$ROOT/rust/target}"
+if [[ "$mode" != release && "$all_plats" -eq 1 ]]; then
+	die "--debug and --test build this platform only; cross builds are release builds"
+fi
+host="$(host_pf)" || die "unsupported host platform: $(uname -s) $(uname -m)"
+canonical="$(read_selection)" || exit 2
 
 case "$mode" in
-	release)
-		mkdir -p ".nix-out/$pf"
-		nix build .#default -o ".nix-out/$pf/ReleaseFast" || exit 1
-		nix build .#rust -o ".nix-out/$pf/rust-release" || exit 1
-		publish ".nix-out/$pf/ReleaseFast/bin" xattr-stream
-		publish ".nix-out/$pf/rust-release/bin" xattr-stream-rs
-		;;
-	debug)
-		nix develop -c zig build -Doptimize=Debug --prefix "zig-out/$pf/Debug" || exit 1
-		(cd rust && nix develop -c cargo build) || exit 1
-		publish "zig-out/$pf/Debug/bin" xattr-stream
-		publish "${cargo_dir#"$ROOT/"}/debug" xattr-stream-rs
-		;;
-	safe)
-		nix develop -c zig build -Doptimize=ReleaseSafe --prefix "zig-out/$pf/ReleaseSafe" || exit 1
-		(cd rust && nix develop -c cargo build --release) || exit 1
-		publish "zig-out/$pf/ReleaseSafe/bin" xattr-stream
-		publish "${cargo_dir#"$ROOT/"}/release" xattr-stream-rs
-		;;
+	debug) zig_profile="Debug" rust_profile="debug" cargo_flags=() ;;
+	safe) zig_profile="ReleaseSafe" rust_profile="release" cargo_flags=(--release) ;;
+	*) zig_profile="ReleaseFast" rust_profile="release" cargo_flags=() ;;
 esac
+cargo_dir="${CARGO_TARGET_DIR:-$ROOT/rust/target}"
+
+exe_name() {
+	local name="xattr-stream"
+	[[ "$1" == rust ]] && name="xattr-stream-rs"
+	[[ "$2" == mswin-* ]] && name="$name.exe"
+	printf '%s' "$name"
+}
+
+# variant IMPL KIND PF: the C library of a Linux product. The Nix and
+# dev-shell Rust builds link glibc; the Zig CLI and every cross build are
+# static musl. Other platforms have no variant.
+variant() {
+	[[ "$3" == linux-* ]] || return 0
+	if [[ "$1" == rust && "$2" != cross ]]; then echo gnu; else echo musl; fi
+}
+
+# product_dir IMPL KIND PF: the product tree, relative to the project. KIND
+# is host (Nix, this platform), cross (Nix, any platform) or direct (dev shell).
+product_dir() {
+	local v base profile
+	v="$(variant "$@")"
+	case "$1/$2" in
+		zig/host) base=".nix-out/zig" profile="ReleaseFast" ;;
+		zig/cross) base=".nix-out/zig/cross" profile="ReleaseFast" ;;
+		zig/direct) base="zig-out" profile="$zig_profile" ;;
+		rust/host) base=".nix-out/rust" profile="release" ;;
+		rust/cross) base=".nix-out/rust/cross" profile="release" ;;
+		rust/direct) base="rust-out" profile="$rust_profile" ;;
+	esac
+	printf '%s/%s%s/%s' "$base" "$3" "${v:+/$v}" "$profile"
+}
+
+# check_product DIR IMPL KIND PF: DIR holds the CLI, and on this host the CLI
+# reports this platform and C library, so a wrong-target build is never
+# published.
+check_product() {
+	local exe about want v
+	exe="$1/bin/$(exe_name "$2" "$4")"
+	[[ -f "$exe" && -x "$exe" ]] || { echo "build: missing $exe" >&2; return 1; }
+	[[ "$4" == "$host" ]] || return 0
+	about="$("$exe" --about 2>/dev/null)"
+	about="${about%$'\r'}"
+	v="$(variant "$2" "$3" "$4")"
+	want=" PF=$4${v:+ VARIANT=$v}"
+	[[ "$about" == *"$want" ]] && return 0
+	echo "build: $exe reports '$about'; expected it to end with '$want'" >&2
+	return 1
+}
+
+# copy_tree SRC DST: copies every file of a staged product into its tree,
+# each by rename, so a running command is replaced rather than overwritten.
+copy_tree() {
+	local f
+	while IFS= read -r f; do
+		mkdir -p "$2/$(dirname "$f")" &&
+			cp -P "$1/$f" "$2/$f.tmp.$$" &&
+			mv -f "$2/$f.tmp.$$" "$2/$f" || return 1
+	done < <(cd "$1" && find . \( -type f -o -type l \) | sed 's|^\./||')
+}
+
+# nix_job IMPL KIND: builds the package without a link, checks the product
+# inside the store path, and only then points the retained output link (a
+# GC root; nix creates its parent directories) at it, so a rejected build
+# leaves the previous link in place.
+nix_job() {
+	local impl="$1" kind="$2" attr out link pf dir
+	case "$impl/$kind" in
+		zig/host) attr="default" ;;
+		zig/cross) attr="cross" ;;
+		rust/host) attr="rust" ;;
+		rust/cross) attr="rust-cross" ;;
+	esac
+	out="$(nix build ".#$attr" --no-link --print-out-paths)" || return 1
+	out="${out%%$'\n'*}"
+	if [[ "$kind" == host ]]; then
+		link="$(product_dir "$impl" host "$host")"
+		check_product "$out" "$impl" host "$host" || return 1
+	else
+		link=".nix-out/$impl/cross"
+		for pf in $PLATFORMS; do
+			[[ "$pf" == "$host" ]] && continue
+			dir="$(product_dir "$impl" cross "$pf")"
+			check_product "$out/${dir#"$link/"}" "$impl" cross "$pf" || return 1
+		done
+	fi
+	nix build "$out" -o "$link"
+}
+
+# direct_job IMPL: builds in the dev shell into a staging tree under
+# .build-work/, checks it, then copies it into the product tree.
+direct_job() {
+	local impl="$1" dir stage lib
+	dir="$(product_dir "$impl" direct "$host")"
+	stage=".build-work/$dir"
+	if [[ "$impl" == zig ]]; then
+		nix develop -c zig build -Doptimize="$zig_profile" --prefix "$stage" || return 1
+	else
+		nix develop -c cargo build "${cargo_flags[@]}" --manifest-path rust/Cargo.toml || return 1
+		mkdir -p "$stage/bin" "$stage/lib" || return 1
+		[[ -f "$cargo_dir/$rust_profile/$(exe_name rust "$host")" ]] || { echo "build: missing $cargo_dir/$rust_profile/$(exe_name rust "$host")" >&2; return 1; }
+		cp -f "$cargo_dir/$rust_profile/$(exe_name rust "$host")" "$stage/bin/" || return 1
+		for lib in libxattr_stream.a libxattr_stream.so libxattr_stream.dylib xattr_stream.lib xattr_stream.dll; do
+			[[ -f "$cargo_dir/$rust_profile/$lib" ]] && { cp -f "$cargo_dir/$rust_profile/$lib" "$stage/lib/" || return 1; }
+		done
+		if [[ -f include/xattr_stream.h ]]; then
+			mkdir -p "$stage/include" && cp -f include/xattr_stream.h "$stage/include/" || return 1
+		fi
+	fi
+	check_product "$stage" "$impl" direct "$host" || return 1
+	copy_tree "$stage" "$dir"
+}
+
+# publish PF DIR: points bin/<PF>/xattr-stream at DIR's CLI by rename, so
+# the entry always names a complete command. Windows hosts get copies:
+# symlinks there need extra privileges.
+publish() {
+	local pf="$1" dir="$2" exe dest tmp
+	exe="$(exe_name "$canonical" "$pf")"
+	dest="bin/$pf/$COMMAND"
+	[[ "$pf" == mswin-* ]] && dest="$dest.exe"
+	tmp="$dest.tmp.$$"
+	mkdir -p "bin/$pf" || return 1
+	if [[ "$host" == mswin-* ]]; then
+		cp -f "$dir/bin/$exe" "$tmp" || return 1
+	else
+		ln -s "../../$dir/bin/$exe" "$tmp" || return 1
+	fi
+	mv -f "$tmp" "$dest" || return 1
+	echo "published: $dest -> $dir/bin/$exe ($canonical)"
+}
+
+impls="$canonical"
+if [[ "$all_impls" -eq 1 ]]; then
+	for impl in $IMPLS; do [[ "$impl" == "$canonical" ]] || impls="$impls $impl"; done
+fi
+platforms="$host"
+[[ "$all_plats" -eq 1 ]] && platforms="$PLATFORMS"
+
+# Build everything in scope, remembering which (implementation, kind) pairs
+# succeeded; a failure fails the run but does not stop the other builds.
+status=0
+for impl in $impls; do
+	if [[ "$mode" == release ]]; then
+		kinds="host"
+		[[ "$all_plats" -eq 1 ]] && kinds="host cross"
+	else
+		kinds="direct"
+	fi
+	for kind in $kinds; do
+		if [[ "$kind" == direct ]]; then direct_job "$impl"; else nix_job "$impl" "$kind"; fi
+		if [[ $? -eq 0 ]]; then
+			printf -v "built_${impl}_${kind}" 1
+		else
+			echo "build: $impl ($kind) failed" >&2
+			status=1
+		fi
+	done
+done
+
+for pf in $platforms; do
+	if [[ "$mode" != release ]]; then kind="direct"
+	elif [[ "$pf" == "$host" ]]; then kind="host"
+	else kind="cross"
+	fi
+	built="built_${canonical}_${kind}"
+	[[ -n "${!built:-}" ]] || continue
+	publish "$pf" "$(product_dir "$canonical" "$kind" "$pf")" || status=1
+done
+for impl in $impls; do
+	[[ "$impl" == "$canonical" ]] && continue
+	kind="host"
+	[[ "$mode" != release ]] && kind="direct"
+	built="built_${impl}_${kind}"
+	[[ -n "${!built:-}" ]] && echo "built: $(product_dir "$impl" "$kind" "$host")/bin/$(exe_name "$impl" "$host") ($impl, not published)"
+done
+exit "$status"

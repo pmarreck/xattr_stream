@@ -15,3 +15,6 @@ packages.x86_64-linux.rust-cross
 checks.x86_64-linux.test-rust-cross
 checks.x86_64-linux.test-rust-cli
 checks.x86_64-linux.test-unsupported-is-fatal
+checks.x86_64-linux.selector-outside-sources
+checks.x86_64-linux.test-build-script
+checks.x86_64-linux.test-build-real

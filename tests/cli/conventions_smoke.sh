@@ -16,7 +16,7 @@ fi
 export MSYS_NO_PATHCONV=1
 
 about="$("$BIN" --about)"
-compiled="${about##* for }"
+compiled="${about##* PF=}"
 compiled="${compiled%%-*}"
 compiled="${compiled%$'\r'}"
 case "${OS:-}" in

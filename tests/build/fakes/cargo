@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Fake cargo (see lib.bash): `cargo build [--release] --manifest-path ...`
+# leaves the CLI and static library in <target dir>/<profile>/, the target
+# dir being $CARGO_TARGET_DIR or else rust/target, as for real cargo here.
+source "$(dirname "${BASH_SOURCE[0]}")/lib.bash"
+fake_record cargo "$@"
+profile=debug
+for a in "$@"; do [[ "$a" == --release ]] && profile=release; done
+dir="${CARGO_TARGET_DIR:-$PWD/rust/target}/$profile"
+host="$(fake_host_pf)"
+fake_exe "$dir" "xattr-stream-rs$(fake_exe_suffix "$host")" "$host" "$(case $host in linux-*) echo gnu ;; esac)" "rust direct-$profile"
+mkdir -p "$dir" && : >"$dir/libxattr_stream.a"

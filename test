@@ -8,9 +8,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 2
 
 # Enter the flake's dev shell when the toolchain is not already on PATH. The
-# check is for zig itself rather than IN_NIX_SHELL, because a stale direnv
-# shell from an older flake can set IN_NIX_SHELL without providing zig.
-if ! command -v zig >/dev/null 2>&1 && [[ -z "${XS_TEST_REEXEC:-}" ]] && command -v nix >/dev/null 2>&1; then
+# check is for the tools themselves rather than IN_NIX_SHELL, because a stale
+# direnv shell from an older flake can set IN_NIX_SHELL without providing
+# them. Bubblewrap confines the build-script tests on Linux.
+toolchain_ready() {
+	command -v zig >/dev/null 2>&1 || return 1
+	[[ "$(uname -s)" != Linux ]] || command -v bwrap >/dev/null 2>&1
+}
+if ! toolchain_ready && [[ -z "${XS_TEST_REEXEC:-}" ]] && command -v nix >/dev/null 2>&1; then
 	XS_TEST_REEXEC=1 exec nix develop -c "$ROOT/test" "$@"
 fi
 
@@ -22,6 +27,7 @@ OUT="zig-out/$pf/ReleaseFast"
 RS="${CARGO_TARGET_DIR:-$ROOT/rust/target}/release"
 
 failures=0
+not_run=0
 step() {
 	local name="$1"
 	shift
@@ -149,6 +155,72 @@ flake_eval() {
 }
 have nix && step "flake evaluates for all four Nix systems" flake_eval
 
+# The build-script tests run ./build in disposable projects with fake
+# builders, confined by scripts/run-isolated (Bubblewrap, Linux only):
+# everything outside their scratch is read-only. The boundary is checked
+# first against disposable sentinels under .build-work/.
+canary() { bash tests/build/isolation_canary.sh "$@"; }
+make_sentinel() {
+	local s
+	s="$(mktemp -d "$ROOT/.build-work/isolation-canary.XXXXXX")" || return 1
+	printf 'original\n' >"$s/file" && printf 'other\n' >"$s/other" && ln -s file "$s/command" || return 1
+	printf '%s' "$s"
+}
+isolation_boundary() {
+	local s fp scratch rc=0
+	mkdir -p "$ROOT/.build-work" || return 1
+	# Control: the same attempts, unconfined, do change a sentinel.
+	s="$(make_sentinel)" && scratch="$(mktemp -d "${TMPDIR:-/tmp}/xattr_stream_canary.XXXXXX")" || return 1
+	fp="$(canary fingerprint "$s")"
+	TEST_WORKSPACE="$scratch" canary attempt "$s" writable || rc=1
+	[[ "$(canary fingerprint "$s")" != "$fp" ]] || { echo "control: unconfined writes changed nothing" >&2; rc=1; }
+	chmod -R u+rwX "$s" && rm -rf "$s" "$scratch"
+	# Confined: every attempt is refused and the sentinel is unchanged.
+	s="$(make_sentinel)" || return 1
+	fp="$(canary fingerprint "$s")"
+	scripts/run-isolated -- bash tests/build/isolation_canary.sh attempt "$s" readonly || rc=1
+	[[ "$(canary fingerprint "$s")" == "$fp" ]] || { echo "confined writes changed the sentinel" >&2; rc=1; }
+	rm -rf "$s"
+	# Private HOME and scratch are writable, each run starts empty, and the
+	# child's exit status comes back.
+	scripts/run-isolated -- bash -c ': >"$HOME/h" && : >"$TEST_WORKSPACE/seen"' || { echo "private scratch is not writable" >&2; rc=1; }
+	scripts/run-isolated -- bash -c '[[ ! -e "$HOME/h" && ! -e "$TEST_WORKSPACE/seen" ]]' || { echo "scratch survived into the next run" >&2; rc=1; }
+	scripts/run-isolated -- bash -c 'exit 7'
+	[[ $? -eq 7 ]] || { echo "exit status not propagated" >&2; rc=1; }
+	return "$rc"
+}
+# What the build-script tests must not touch: this checkout's selection,
+# published commands and output links, inspected independently around the run.
+live_build_state() {
+	find CANONICAL_IMPL bin .nix-out -maxdepth 6 \( -type f -o -type l \) 2>/dev/null | LC_ALL=C sort | while IFS= read -r f; do
+		printf '%s %s\n' "$(ls -l "$f")" "$(cksum <"$f" 2>/dev/null)"
+	done
+}
+build_script_confined() {
+	local before rc=0
+	before="$(live_build_state)"
+	scripts/run-isolated -- bash tests/build/test_build.sh "$ROOT" || rc=1
+	[[ "$(live_build_state)" == "$before" ]] || { echo "the build-script tests changed this checkout's build state" >&2; rc=1; }
+	return "$rc"
+}
+if [[ "$(uname -s)" == Linux ]]; then
+	if have bwrap; then
+		failures_before=$failures
+		step "isolation boundary (forbidden-write canaries)" isolation_boundary
+		if [[ "$failures" -eq "$failures_before" ]]; then
+			step "build script: selection, scopes, publication (confined)" build_script_confined
+		else
+			printf '\033[31mFAIL\033[0m build script tests not run: the isolation boundary failed\n' >&2
+			failures=$((failures + 1))
+		fi
+	fi
+else
+	# No qualified write boundary here yet; Linux runners and the Nix checks
+	# (test-build-script, test-build-real) cover ./build.
+	printf '\n\033[33mNOT RUN\033[0m build script tests: no qualified write boundary on %s (they run on Linux, and in nix flake check on Linux)\n' "$(uname -s)"
+	not_run=$((not_run + 1))
+fi
+
 have clang && step "consumer: C (clang)" consumer_c
 have rustc && step "consumer: Rust" consumer_rust
 have luajit && step "consumer: LuaJIT" consumer_luajit
@@ -173,6 +245,7 @@ fi
 printf '\n'
 if [[ "$failures" -eq 0 ]]; then
 	printf '\033[32mAll test steps passed\033[0m\n'
+	[[ "$not_run" -eq 0 ]] || printf '\033[33m%d step(s) not run on this platform (see NOT RUN above)\033[0m\n' "$not_run"
 else
 	printf '\033[31m%d test step(s) failed\033[0m\n' "$failures" >&2
 fi

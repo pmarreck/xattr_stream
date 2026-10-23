@@ -143,6 +143,16 @@ static int text_printf(const char *fmt, ...) {
 #define ANSI_RESET "\x1b[0m"
 
 #define PROG "xattr-stream"
+/* The C library this executable was linked against, for --about: Linux
+ * builds name it (gnu or musl), other platforms have only one. musl defines
+ * no identifying macro, so it is "Linux without glibc". */
+#if defined(__linux__) && defined(__GLIBC__)
+#define CLI_VARIANT " VARIANT=gnu"
+#elif defined(__linux__)
+#define CLI_VARIANT " VARIANT=musl"
+#else
+#define CLI_VARIANT ""
+#endif
 
 enum {
 	EXIT_OK = 0,
@@ -1245,8 +1255,8 @@ int main(int argc, char **argv) {
 			if (strcmp(a, "--help") == 0 || strcmp(a, "-h") == 0) { usage(stdout); return EXIT_OK; }
 			if (strcmp(a, "--version") == 0) { printf(PROG " %s\n", xs_version()); return EXIT_OK; }
 			if (strcmp(a, "--about") == 0) {
-				printf(PROG " %s: cross-platform binary-safe file attributes (xattrs / NTFS streams) for %s\n",
-					xs_version(), xs_target());
+				printf(PROG " %s: cross-platform binary-safe file attributes (xattrs / NTFS streams) PF=%s%s\n",
+					xs_version(), xs_target(), CLI_VARIANT);
 				return EXIT_OK;
 			}
 			if (strcmp(a, "--nofollow") == 0) { o.xs.flags |= XS_FLAG_NOFOLLOW; continue; }

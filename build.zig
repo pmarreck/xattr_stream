@@ -188,13 +188,16 @@ pub fn build(b: *std.Build) void {
 		test_step.dependOn(&b.addRunArtifact(t).step);
 	}
 
-	// Cross-compile every supported target into <prefix>/<PF>/<optimize>/.
+	// Cross-compile every supported target into <prefix>/<PF>/[musl/]<optimize>/;
+	// the musl directory names the Linux C library (the targets are static
+	// musl), and other platforms have none.
 	const cross_step = b.step("cross", "Cross-compile library and CLI for all supported targets");
 	for (cross_targets) |triple| {
 		const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable;
 		const rt = b.resolveTargetQuery(query);
 		const arts = makeArtifacts(b, rt, optimize);
-		const out_dir = b.fmt("{s}/{s}", .{ platformName(b, rt.result), @tagName(optimize) });
+		const variant = if (rt.result.os.tag == .linux) "/musl" else "";
+		const out_dir = b.fmt("{s}{s}/{s}", .{ platformName(b, rt.result), variant, @tagName(optimize) });
 		const lib_dir = b.fmt("{s}/lib", .{out_dir});
 		const bin_dir = b.fmt("{s}/bin", .{out_dir});
 		cross_step.dependOn(&b.addInstallArtifact(arts.static, .{

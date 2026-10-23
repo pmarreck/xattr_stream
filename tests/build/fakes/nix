@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Fake nix (see lib.bash):
+#   nix build .#ATTR --no-link --print-out-paths   new fake store path laid
+#                                                  out like that package
+#   nix build STOREPATH -o LINK                    LINK -> STOREPATH
+#   nix develop -c CMD...                          runs CMD
+# Store paths are $FAKE_STORE/<n>-<attr>; the log names them relative to
+# $FAKE_STORE so expectations do not depend on where the test runs.
+source "$(dirname "${BASH_SOURCE[0]}")/lib.bash"
+store_root="${FAKE_STORE:?}"
+case "${1:-}" in
+	develop)
+		fake_record nix "$@"
+		shift
+		[[ "${1:-}" == -c ]] && shift
+		exec "$@"
+		;;
+	build) ;;
+	*) fake_record nix "$@"; echo "fake nix: unsupported: $*" >&2; exit 2 ;;
+esac
+if [[ "${3:-}" == -o ]]; then
+	fake_record nix build "${2#"$store_root/"}" -o "$4"
+	[[ -d "$2" ]] || { echo "fake nix: no such store path $2" >&2; exit 1; }
+	mkdir -p "$(dirname "$4")" && ln -sfn "$2" "$4"
+	exit
+fi
+fake_record nix "$@"
+[[ "${3:-} ${4:-}" == "--no-link --print-out-paths" ]] || { echo "fake nix: unsupported: $*" >&2; exit 2; }
+attr="${2:?}"
+count=$(find "$store_root" -mindepth 1 -maxdepth 1 | wc -l)
+store="$store_root/$((count + 1))-${attr#.#}"
+mkdir -p "$store" || exit 1
+all_pf="linux-amd64 linux-arm64 macos-amd64 macos-arm64 mswin-amd64 mswin-arm64"
+host="$(fake_host_pf)"
+case "$attr" in
+	.#default)
+		fake_exe "$store/bin" "xattr-stream$(fake_exe_suffix "$host")" "$host" "$(case $host in linux-*) echo musl ;; esac)" "zig default"
+		fake_lib "$store" ;;
+	.#rust)
+		fake_exe "$store/bin" "xattr-stream-rs$(fake_exe_suffix "$host")" "$host" "$(case $host in linux-*) echo gnu ;; esac)" "rust rust"
+		fake_lib "$store" ;;
+	.#cross|.#rust-cross)
+		for pf in $all_pf; do
+			v=""; [[ "$pf" == linux-* ]] && v="musl"
+			if [[ "$attr" == ".#cross" ]]; then
+				tree="$store/$pf${v:+/$v}/ReleaseFast"; exe="xattr-stream"; label="zig cross"
+			else
+				tree="$store/$pf${v:+/$v}/release"; exe="xattr-stream-rs"; label="rust rust-cross"
+			fi
+			fake_exe "$tree/bin" "$exe$(fake_exe_suffix "$pf")" "$pf" "$v" "$label"
+			fake_lib "$tree"
+		done ;;
+	*) echo "fake nix: unknown attribute $attr" >&2; exit 1 ;;
+esac
+echo "$store"

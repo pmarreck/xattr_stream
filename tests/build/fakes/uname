@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake uname: reports FAKE_UNAME_S and FAKE_UNAME_M (see lib.bash).
+case "${1:-}" in
+	-s) echo "${FAKE_UNAME_S:?}" ;;
+	-m) echo "${FAKE_UNAME_M:?}" ;;
+	*) echo "${FAKE_UNAME_S:?} ${FAKE_UNAME_M:?}" ;;
+esac

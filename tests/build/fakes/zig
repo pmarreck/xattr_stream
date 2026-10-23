@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Fake zig (see lib.bash): `zig build -Doptimize=MODE --prefix DIR` installs
+# a host product tree into DIR.
+source "$(dirname "${BASH_SOURCE[0]}")/lib.bash"
+fake_record zig "$@"
+mode="" prefix=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		-Doptimize=*) mode="${1#-Doptimize=}" ;;
+		--prefix) prefix="$2"; shift ;;
+	esac
+	shift
+done
+[[ -n "$prefix" ]] || { echo "fake zig: no --prefix" >&2; exit 2; }
+host="$(fake_host_pf)"
+fake_exe "$prefix/bin" "xattr-stream$(fake_exe_suffix "$host")" "$host" "$(case $host in linux-*) echo musl ;; esac)" "zig direct-$mode"
+fake_lib "$prefix"

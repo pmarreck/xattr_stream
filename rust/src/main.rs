@@ -11,6 +11,15 @@ use std::io::{self, BufWriter, IsTerminal, Read, Write};
 use xattr_stream::{self as xs, dump, names, pb, walk, Error, Options, Status, PORTABLE_VALUE_LEN};
 
 const PROG: &str = "xattr-stream";
+/// The C library this executable was linked against, for --about: Linux
+/// builds name it (gnu or musl), other platforms have only one.
+const VARIANT: &str = if cfg!(all(target_os = "linux", target_env = "musl")) {
+	" VARIANT=musl"
+} else if cfg!(all(target_os = "linux", target_env = "gnu")) {
+	" VARIANT=gnu"
+} else {
+	""
+};
 const ANSI_NAME: &[u8] = b"\x1b[38;5;208m";
 const ANSI_VALUE: &[u8] = b"\x1b[38;5;117m";
 const ANSI_RESET: &[u8] = b"\x1b[0m";
@@ -1178,7 +1187,7 @@ fn run() -> i32 {
 				}
 				b"--version" => return println_out(format!("{PROG} {}", xs::VERSION).as_bytes()),
 				b"--about" => {
-					return println_out(format!("{PROG} {}: cross-platform binary-safe file attributes (xattrs / NTFS streams), Rust implementation, for {}", xs::VERSION, xs::PLATFORM).as_bytes());
+					return println_out(format!("{PROG} {}: cross-platform binary-safe file attributes (xattrs / NTFS streams), Rust implementation, PF={}{VARIANT}", xs::VERSION, xs::PLATFORM).as_bytes());
 				}
 				b"--nofollow" => o.nofollow = true,
 				b"--raw" => o.raw = true,

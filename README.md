@@ -348,26 +348,60 @@ reach `CreateFileW`, so `:`, `\` and `/` can never turn a name into a path.
 ## Build and test
 
 Platforms are named `<OS>-<ARCH>` (PF): OS is `linux`, `macos` or `mswin`,
-ARCH is `amd64` or `arm64`, giving six platforms. Commands are linked into
+ARCH is `amd64` or `arm64`, giving six platforms. Commands are published in
 `bin/<PF>/`, so a PATH entry for `bin/linux-amd64` never picks up a Mac
 binary copied alongside it.
 
+There are two implementations of the library and CLI: `zig` (the Zig core
+with the C CLI) and `rust`. The tracked file `CANONICAL_IMPL` names the
+canonical one, currently `zig`; only its CLI is published, as
+`bin/<PF>/xattr-stream`. The other stays runnable inside its own product
+tree.
+
 ```sh
-./build        # host platform, ReleaseFast via nix build; bin/<PF>/xattr-stream
-./build-all    # both implementations for all six platforms; bin/<PF>/ for each
-./test         # Zig tests, CLI suite, C/Rust/LuaJIT/Zig consumers, pkg-config consumer
+./build                 # canonical implementation, this platform (nix build)
+./build --all-impls     # also the other implementation (not published)
+./build --all-plats     # the canonical implementation for all six platforms
+./build --all           # both implementations, all six platforms
+./build canonize rust   # make rust canonical; builds nothing until the next ./build
+./test                  # Zig tests, CLI suites, consumers, build-script tests
 nix flake check
 ```
 
-`./build --debug` and `./build --test` build Debug and ReleaseSafe through
-the dev shell into `zig-out/<PF>/<profile>/`. Product trees (`bin/`, `lib/`,
-`include/`) stay whole: Nix outputs are kept at `.nix-out/<PF>/ReleaseFast`
-and `.nix-out/cross/<PF>/ReleaseFast`, and `bin/<PF>/` holds only links to
-them. Without Nix: `zig build --prefix zig-out/<PF>/ReleaseFast`, `zig build
-test`, and `zig build cross --prefix <dir>`.
+`--all-implementations` and `--all-platforms` are long spellings of the
+scope flags; flags combine in any order. `./build --debug` and `./build
+--test` build Debug and ReleaseSafe (Rust: its release profile) through the
+dev shell, for this platform only. Every product tree (`bin/`, `lib/`,
+`include/`) sits at `<impl>-out/<PF>/[<VARIANT>/]<profile>/`, where VARIANT
+names the Linux C library (`musl` for the static Zig CLI and every cross
+build, `gnu` for the host Rust build) and is absent elsewhere:
+
+| Build | Product tree |
+|---|---|
+| `./build` (Nix) | `.nix-out/zig/<PF>/[musl/]ReleaseFast`, `.nix-out/rust/<PF>/[gnu/]release` |
+| `--all-plats` (Nix) | `.nix-out/zig/cross/<PF>/[musl/]ReleaseFast`, `.nix-out/rust/cross/<PF>/[musl/]release` |
+| `--debug`, `--test` | `zig-out/<PF>/[musl/]<Debug or ReleaseSafe>`, `rust-out/<PF>/[gnu/]<debug or release>` |
+
+Nix outputs are retained links (garbage-collection roots) under `.nix-out/`.
+A new product replaces the previous one only after it checks out: its CLI
+exists and, for this platform, its `--about` line reports the expected PF and
+VARIANT. A failed build leaves the previous `bin/<PF>/` entry in place.
+Changing `CANONICAL_IMPL` rebuilds nothing, because the file is outside the
+package sources. Without Nix: `zig build --prefix zig-out/<PF>/[musl/]ReleaseFast`,
+`zig build test`, `zig build cross --prefix <dir>`, and `cargo build --release
+--manifest-path rust/Cargo.toml`.
+
+`tests/build/test_build.sh` checks selection, scopes and publication with
+recording stand-ins for nix, zig, cargo and uname in disposable projects.
+`./test` runs it under Bubblewrap (`scripts/run-isolated`), which makes
+everything outside the test's scratch read-only, after checking that
+boundary against disposable sentinels. Bubblewrap is Linux-only, so `./test`
+on macOS reports these tests as not run. On Linux, the Nix checks `test-build-script`
+and `test-build-real` run them in the Nix sandbox; the latter runs
+`./build --all` against the real packages.
 
 The Rust implementation is cross-compiled by `nix build .#rust-cross` into
-`.nix-out/rust-cross/<PF>/release/` (CLI, static library, header). It uses a
+`<PF>/[musl/]release/` (CLI, static library, header). It uses a
 rust-overlay toolchain with the six standard libraries and Zig as the C
 compiler and linker through cargo-zigbuild, so no per-platform SDK is
 needed. Linux targets are static musl; Windows targets are `windows-gnu`
@@ -439,6 +473,6 @@ in-process unit test tier the Bash suite could not. The C CLI is kept
 deliberately: it can only reach the core through the header, which keeps
 the public ABI exercised on every build. The Cosmopolitan APE single binary
 is gone; its purpose, one easy cross-platform executable for attributes, is
-now served by the per-platform static binaries from `./build-all`.
+now served by the per-platform static binaries from `./build --all-plats`.
 
 MIT License.
