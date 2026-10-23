@@ -5,12 +5,12 @@ limits and evidence: docs/plan_context/.
 
 ## Next
 
-- [ ] Rust implementation: confirm the native CI runs (macOS ARM/Intel, Linux ARM/x64 through `./test`; Windows x64/ARM through `cargo test`)
 - [ ] Rust cross builds for all six platforms in `./build-all` (needs Rust standard libraries for the other targets in the flake, e.g. a rust-overlay toolchain)
 - [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) and decide LF-only text output (context: docs/plan_context/platform_verification.md)
 
 ## Recently done
 
+- [x] Rust implementation verified natively on all six platforms by GitHub Actions run 39979476930 (824b713); counts in docs/plan_context/platform_verification.md (done 2026-10-23 11:45 EDT)
 - [x] Zig walker: entries a listing reports as `.unknown` (no d_type: XFS without ftype, some network mounts) are resolved with lstat, so their directories are entered; Zig 0.16 maps DT_UNKNOWN to `.unknown`, which the walker had treated as a plain file (done 2026-10-23 11:40 EDT)
 - [x] Debug builds of both CLIs print a yellow `DEBUG BUILD!` on stderr (silenced by a non-empty MUTE_DEBUG_STATUS); `./test` checks Debug and release builds of each (done 2026-10-23 11:31 EDT)
 - [x] Rust implementation in `rust/` (core, same C ABI, CLI `xattr-stream-rs`, no crates): CLI suite 305/305, differential 834 cases with 0 mismatches (catches planted one-character bugs), C and LuaJIT consumers over the Rust library, `nix build .#rust` (done 2026-10-23 11:25 EDT)

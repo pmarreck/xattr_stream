@@ -85,6 +85,27 @@ Zig 0.16.0's aarch64-windows build crashes with an access violation
 works. The ARM job therefore runs test executables cross-compiled on the x64
 runner.
 
+## Six platforms, both implementations (2026-10-23)
+
+GitHub Actions run 39979476930 at 824b713, one hosted runner per platform
+(PF). Unix runners run the whole `./test` in the dev shell; Windows runners
+run the Zig tests and `cargo test --release` natively.
+
+| PF | Filesystem | CLI suite, C and Rust CLI | Differential C vs Rust | Rust unit tests |
+|---|---|---|---|---|
+| linux-amd64 | ext4 | 305/305 each | 834 cases, 0 mismatches | 47 + 2 |
+| linux-arm64 | ext4 | 305/305 each | 834 cases, 0 mismatches | 47 + 2 |
+| macos-arm64 | APFS | 288 + 1 n/a each | 744 cases, 0 mismatches | 47 + 2 |
+| macos-amd64 | APFS | 288 + 1 n/a each | 744 cases, 0 mismatches | 47 + 2 |
+| mswin-amd64 | NTFS | not ported | not run | 48 + 2; Zig 99/99 |
+| mswin-arm64 | NTFS | not ported | not run | 48 + 2; Zig 36, 52, 5 and 6 (cross-compiled executables) |
+
+The differential runs fewer cases on APFS, which refuses non-UTF-8 file
+names, so the generator leaves those paths out. The first Linux run failed
+before any comparison: the seeded fixture gave some files more than ext4's
+one 4 KiB block of attributes. The test now probes for large-value support
+and keeps each file within the block where it is missing.
+
 ## Not run
 
 - The Bash CLI suite on Windows (needs porting).
