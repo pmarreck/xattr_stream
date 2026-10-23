@@ -70,6 +70,11 @@
           nativeBuildInputs = [ zig ] ++ extraInputs;
           dontConfigure = true;
           dontFixup = true;
+          # The sandbox's seccomp filter refuses setxattr on every filesystem,
+          # so attribute tests are told to expect that; without this they fail
+          # (see test-unsupported-is-fatal). ./test and the native CI runners
+          # run them for real.
+          XS_EXPECT_UNSUPPORTED = "1";
           buildPhase = zigEnv + script;
           installPhase = ''
             mkdir -p $out
@@ -96,7 +101,8 @@
 
         # The Rust implementation (rust/): CLI, static and shared library with
         # the same C ABI, and the shared header. `cargo test` runs in the
-        # sandbox, where attribute tests skip (no setxattr) and the rest run.
+        # sandbox, where attribute tests are declared unsupported (below) and
+        # the rest run.
         # The crate has no dependencies; the whole repository is the source
         # because a test reads tests/cli/fixtures/allbytes.pb.
         rust = pkgs.rustPlatform.buildRustPackage {
@@ -154,8 +160,8 @@
             bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
           '';
 
-          # The Rust CLI through the same Bash suite (SKIPs inside the sandbox,
-          # which refuses setxattr; ./test runs it for real).
+          # The Rust CLI through the same Bash suite (declared unsupported
+          # inside the sandbox, which refuses setxattr; ./test runs it for real).
           test-rust-cli = mkCheck "test-rust-cli" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils ] ''
             bash tests/cli/test_cli.sh ${rust}/bin/xattr-stream-rs
           '';
@@ -173,6 +179,34 @@
               test -f out/$pf/ReleaseFast/lib/xattr_stream.lib || { echo "missing static lib for $pf" >&2; exit 1; }
               test -f out/$pf/ReleaseFast/lib/xattr_stream.dll || { echo "missing DLL for $pf" >&2; exit 1; }
             done
+          '';
+
+          # The control behind XS_EXPECT_UNSUPPORTED: this sandbox refuses
+          # setxattr everywhere (a seccomp filter, whatever the filesystem),
+          # so without the declaration every suite must fail and say why.
+          test-unsupported-is-fatal = mkCheck "test-unsupported-is-fatal" [ pkgs.bashInteractive pkgs.coreutils pkgs.diffutils pkgs.gnugrep pkgs.luajit pkgs.clang pkgs.rustc pkgs.cargo ] ''
+            zig build
+            unset XS_EXPECT_UNSUPPORTED
+            must_fail() {
+              local name="$1"; shift
+              if "$@" >"$name.log" 2>&1; then
+                echo "$name passed on a filesystem without attributes" >&2; cat "$name.log" >&2; exit 1
+              fi
+              grep -q "set XS_EXPECT_UNSUPPORTED=1" "$name.log" || {
+                echo "$name failed for another reason" >&2; cat "$name.log" >&2; exit 1
+              }
+            }
+            must_fail zig-tests zig build test
+            must_fail cli bash tests/cli/test_cli.sh zig-out/bin/xattr-stream
+            must_fail differential bash tests/cli/differential.sh zig-out/bin/xattr-stream zig-out/bin/xattr-stream
+            clang -std=c99 -Izig-out/include -o consumer_c tests/consumers/c/consumer.c zig-out/lib/libxattr_stream.a
+            must_fail consumer-c ./consumer_c
+            rustc --edition 2021 -O -C link-arg=zig-out/lib/libxattr_stream.a -o consumer_rs tests/consumers/rust/consumer.rs
+            must_fail consumer-rust ./consumer_rs
+            must_fail consumer-luajit luajit tests/consumers/luajit/consumer.lua zig-out/lib/libxattr_stream.so
+            must_fail consumer-zig sh -c 'cd tests/consumers/zig && zig build test'
+            export CARGO_HOME=$TMPDIR/cargo CARGO_TARGET_DIR=$TMPDIR/cargo-target
+            must_fail rust-tests cargo test --offline --release --manifest-path rust/Cargo.toml
           '';
 
           # Independent compilers/runtimes consuming the C ABI.
@@ -205,6 +239,7 @@
               nativeBuildInputs = [ opkgs.pkg-config ];
               buildInputs = [ opkgs.xattr_stream ];
               dontConfigure = true;
+              XS_EXPECT_UNSUPPORTED = "1";
               buildPhase = ''
                 $CC -std=c99 -Wall -Wextra -Werror -pedantic -o consumer consumer.c \
                   $(pkg-config --cflags --libs xattr_stream)

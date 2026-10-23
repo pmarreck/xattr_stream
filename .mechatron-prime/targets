@@ -12,3 +12,4 @@ checks.x86_64-linux.test-consumer-zig
 checks.x86_64-linux.test-overlay-pkgconfig
 packages.x86_64-linux.rust
 checks.x86_64-linux.test-rust-cli
+checks.x86_64-linux.test-unsupported-is-fatal

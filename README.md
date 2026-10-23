@@ -376,12 +376,21 @@ docs/plan_context/platform_verification.md):
 
 Sandboxed Nix checks cannot exercise attribute I/O at all: Nix's build
 sandbox installs a seccomp rule that makes `setxattr` fail with ENOTSUP,
-because attributes are not representable in the store's NAR format. Inside
-`nix flake check` the integration tests, the CLI suite and the consumers
-therefore detect `XS_UNSUPPORTED` on their probe and report SKIP; what CI
-proves is compilation for all targets, the pure name and packing logic, and
-the skip path. Real attribute I/O is verified by `./test`, which runs in the
-dev shell outside the sandbox.
+because attributes are not representable in the store's NAR format. This
+holds on every filesystem the sandbox can write (measured: the build
+directory, `/tmp`, `$out` and a tmpfs `/dev/shm`), so no scratch location
+helps.
+
+Every attribute test fails on a filesystem that refuses attributes, unless
+the run declares that case with `XS_EXPECT_UNSUPPORTED=1`. The sandboxed
+checks declare it: there the Zig tests skip their attribute cases visibly,
+and the CLI suite, differential and consumers stop after the probe confirms
+`XS_UNSUPPORTED`. The check `test-unsupported-is-fatal` runs each of those
+suites in the sandbox without the declaration and requires every one to
+fail and name the variable. What Nix CI proves is compilation for all
+targets, the pure name and packing logic, and that control. Real attribute
+I/O is verified by `./test`, which runs in the dev shell outside the
+sandbox, and by the native GitHub Actions runners.
 
 Verified natively: macOS `pathconf` limit reporting (APFS reports a
 56-bit size), Windows zero-length streams, Windows symlink resolution

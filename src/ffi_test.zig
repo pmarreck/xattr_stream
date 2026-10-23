@@ -2,6 +2,7 @@
 //! NULL/length conventions, ownership via xs_buffer_free, and status codes.
 const std = @import("std");
 const ffi = @import("ffi.zig");
+const test_env = @import("test_env.zig");
 const io = std.testing.io;
 const alloc = std.testing.allocator;
 const expect = std.testing.expect;
@@ -20,10 +21,9 @@ const Fixture = struct {
 		defer alloc.free(base);
 		const file = try std.fs.path.join(alloc, &.{ base, "f" });
 		errdefer alloc.free(file);
-		// Same skip rule as the core fixture: no attribute support, no verdict.
+		// Same rule as the core fixture (test_env.zig).
 		if (ffi.xs_set(file.ptr, file.len, "probe", 5, "x", 1, null) == ffi.XS_UNSUPPORTED) {
-			std.debug.print("SKIP: {s} does not support attributes\n", .{base});
-			return error.SkipZigTest;
+			return test_env.unsupported(base);
 		}
 		_ = ffi.xs_remove(file.ptr, file.len, "probe", 5, null);
 		return .{ .tmp = tmp, .file = file };

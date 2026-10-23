@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the whole suite: Zig unit/integration tests, the C CLI over the public
-# header via the Bash suite, and every consumer that has a toolchain here.
+# header via the Bash suite, every consumer, and the Rust implementation.
 # No `set -e`: failures are accumulated and returned as the exit code.
 set -u
 
@@ -127,13 +127,24 @@ consumer_luajit_over_rust() {
 	luajit tests/consumers/luajit/consumer.lua "$RS/libxattr_stream$shared_ext"
 }
 
-if command -v clang >/dev/null 2>&1; then step "consumer: C (clang)" consumer_c; else echo "skip: clang not found"; fi
-if command -v rustc >/dev/null 2>&1; then step "consumer: Rust" consumer_rust; else echo "skip: rustc not found"; fi
-if command -v luajit >/dev/null 2>&1; then step "consumer: LuaJIT" consumer_luajit; else echo "skip: luajit not found"; fi
-if command -v clang >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1; then step "consumer: C via pkg-config" consumer_pkgconfig; else echo "skip: clang or pkg-config not found"; fi
+# Every step is required: a missing tool fails the run instead of skipping.
+have() {
+	local t
+	for t in "$@"; do
+		command -v "$t" >/dev/null 2>&1 && continue
+		printf '\033[31mFAIL\033[0m %s not found (a required check cannot run)\n' "$t" >&2
+		failures=$((failures + 1))
+		return 1
+	done
+}
+
+have clang && step "consumer: C (clang)" consumer_c
+have rustc && step "consumer: Rust" consumer_rust
+have luajit && step "consumer: LuaJIT" consumer_luajit
+have clang pkg-config && step "consumer: C via pkg-config" consumer_pkgconfig
 step "consumer: Zig module" consumer_zig
 
-if command -v cargo >/dev/null 2>&1; then
+if have cargo; then
 	step "rust: version matches build.zig.zon" rust_version
 	step "rust: cargo test" rust_unit
 	step "rust: cargo build" rust_build
@@ -141,11 +152,8 @@ if command -v cargo >/dev/null 2>&1; then
 	step "rust: debug banner: release build is silent" bash tests/cli/debug_banner.sh "$RS/xattr-stream-rs" release
 	step "rust: debug banner: debug build announces itself" rust_debug_cli
 	step "rust: differential against the C CLI" bash tests/cli/differential.sh "$OUT/bin/xattr-stream" "$RS/xattr-stream-rs"
-	if command -v clang >/dev/null 2>&1; then step "rust: consumer: C over the Rust library" consumer_c_over_rust; fi
-	if command -v luajit >/dev/null 2>&1; then step "rust: consumer: LuaJIT over the Rust library" consumer_luajit_over_rust; fi
-else
-	printf '\033[31mFAIL\033[0m rust: cargo not found (the Rust implementation is required)\n' >&2
-	failures=$((failures + 1))
+	have clang && step "rust: consumer: C over the Rust library" consumer_c_over_rust
+	have luajit && step "rust: consumer: LuaJIT over the Rust library" consumer_luajit_over_rust
 fi
 
 printf '\n'

@@ -31,14 +31,18 @@ printf 'abcd' >"$tmp/in/four"
 head -c 4000 /dev/zero | tr '\0' 'x' >"$tmp/in/4000"
 head -c 70000 /dev/zero | tr '\0' 'y' >"$tmp/in/70000"
 
-# A filesystem without attribute support (the Nix build sandbox) can verify
-# nothing here; say so loudly instead of failing or passing silently.
+# A filesystem without attribute support fails the comparison, unless the run
+# declares that case with XS_EXPECT_UNSUPPORTED=1 (the Nix build sandbox).
 : >"$tmp/probe"
 if ! "$REF" put "$tmp/probe" probe <"$tmp/in/v" >/dev/null 2>&1; then
 	"$REF" put "$tmp/probe" probe <"$tmp/in/v" >/dev/null 2>&1
 	if [[ $? -eq 3 ]]; then
-		echo "SKIP: filesystem at $tmp does not support attributes (XS_UNSUPPORTED)" >&2
-		exit 0
+		if [[ "${XS_EXPECT_UNSUPPORTED:-}" == 1 ]]; then
+			echo "differential: declared unsupported; not run ($tmp refuses attributes)"
+			exit 0
+		fi
+		echo "differential: $tmp does not support attributes; set XS_EXPECT_UNSUPPORTED=1 where that is expected" >&2
+		exit 1
 	fi
 	echo "differential: the reference cannot write attributes in $tmp" >&2
 	exit 2

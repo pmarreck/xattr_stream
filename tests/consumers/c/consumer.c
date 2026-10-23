@@ -23,9 +23,12 @@ int main(void) {
 
 	int st = xs_set(path, strlen(path), "probe", 5, all, sizeof all, NULL);
 	if (st == XS_UNSUPPORTED) {
-		fprintf(stderr, "SKIP: filesystem does not support attributes\n");
+		/* Fatal unless declared (the Nix build sandbox refuses setxattr). */
+		const char *declared = getenv("XS_EXPECT_UNSUPPORTED");
 		remove(path);
-		return 0;
+		if (declared && strcmp(declared, "1") == 0) return 0;
+		fprintf(stderr, "FAIL: filesystem does not support attributes; set XS_EXPECT_UNSUPPORTED=1 where that is expected\n");
+		return 1;
 	}
 	CHECK(st == XS_OK, "xs_set");
 

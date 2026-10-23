@@ -59,9 +59,13 @@ fn main() {
 	unsafe {
 		let st = xs_set(p(path), path.len(), p("probe"), 5, all.as_ptr() as *const c_void, all.len(), std::ptr::null());
 		if st == XS_UNSUPPORTED {
-			eprintln!("SKIP: filesystem does not support attributes");
+			// Fatal unless declared (the Nix build sandbox refuses setxattr).
 			let _ = std::fs::remove_file(path);
-			return;
+			if std::env::var_os("XS_EXPECT_UNSUPPORTED").is_some_and(|v| v == "1") {
+				return;
+			}
+			eprintln!("FAIL: filesystem does not support attributes; set XS_EXPECT_UNSUPPORTED=1 where that is expected");
+			std::process::exit(1);
 		}
 		check!(st == XS_OK, "xs_set");
 

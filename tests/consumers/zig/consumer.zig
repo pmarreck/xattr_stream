@@ -14,7 +14,14 @@ test "Zig module consumer: round trip through the importable API" {
 
 	const value = "a\x00b\n\xff";
 	xs.set(f, "probe", value, .{}) catch |e| switch (e) {
-		error.Unsupported => return error.SkipZigTest,
+		// Fatal unless declared (the Nix build sandbox refuses setxattr).
+		error.Unsupported => {
+			const declared = std.testing.environ.getAlloc(alloc, "XS_EXPECT_UNSUPPORTED") catch "";
+			defer if (declared.len > 0) alloc.free(declared);
+			if (std.mem.eql(u8, declared, "1")) return error.SkipZigTest;
+			std.debug.print("{s} does not support attributes; set XS_EXPECT_UNSUPPORTED=1 where that is expected\n", .{base});
+			return e;
+		},
 		else => return e,
 	};
 	const got = try xs.get(alloc, f, "probe", .{});

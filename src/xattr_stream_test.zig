@@ -4,6 +4,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const xs = @import("xattr_stream.zig");
+const test_env = @import("test_env.zig");
 const io = std.testing.io;
 const alloc = std.testing.allocator;
 const expect = std.testing.expect;
@@ -22,15 +23,12 @@ const Fixture = struct {
 		const base = try tmp.dir.realPathFileAlloc(io, ".", alloc);
 		errdefer alloc.free(base);
 		// A filesystem without attribute support cannot verify anything here;
-		// skip loudly instead of reporting false failures.
+		// see test_env.zig for when that fails and when it skips.
 		try tmp.dir.writeFile(io, .{ .sub_path = "probe", .data = "" });
 		const probe = try std.fs.path.join(alloc, &.{ base, "probe" });
 		defer alloc.free(probe);
 		xs.set(probe, "probe", "x", .{}) catch |e| switch (e) {
-			error.Unsupported => {
-				std.debug.print("SKIP: {s} does not support attributes\n", .{base});
-				return error.SkipZigTest;
-			},
+			error.Unsupported => return test_env.unsupported(base),
 			else => return e,
 		};
 		return .{ .tmp = tmp, .base = base };

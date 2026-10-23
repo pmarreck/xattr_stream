@@ -61,14 +61,21 @@ new_file() {
 	printf '%s' "$f"
 }
 
-# Probe once: if this filesystem cannot hold attributes at all, the suite
-# cannot verify anything meaningful here and says so loudly.
+# Probe once: a filesystem that cannot hold attributes at all fails the suite,
+# unless the run declares that case with XS_EXPECT_UNSUPPORTED=1 (the Nix
+# build sandbox refuses setxattr everywhere). Then the probe's XS_UNSUPPORTED
+# exit and message are the whole verdict.
 probe="$(new_file probe)"
 out=""; err=""; rc=0
 capture "$BIN" put "$probe" probe <<<"x"
 if [[ "$rc" -eq 3 ]]; then
-	echo "SKIP: filesystem at $tmpdir does not support attributes (XS_UNSUPPORTED)" >&2
-	exit 0
+	if [[ "${XS_EXPECT_UNSUPPORTED:-}" == 1 ]]; then
+		[[ "$err" == *"XS_UNSUPPORTED"* ]] || { echo "FAIL: unsupported put did not name XS_UNSUPPORTED: $err" >&2; exit 1; }
+		echo "CLI tests: declared unsupported; attribute tests not run ($tmpdir refuses attributes)"
+		exit 0
+	fi
+	echo "FAIL: $tmpdir does not support attributes; set XS_EXPECT_UNSUPPORTED=1 where that is expected" >&2
+	exit 1
 fi
 
 current="help"

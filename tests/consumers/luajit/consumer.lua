@@ -45,9 +45,11 @@ local all = table.concat(parts)
 
 local st = lib.xs_set(path, #path, "probe", 5, all, #all, nil)
 if st == XS_UNSUPPORTED then
-	io.stderr:write("SKIP: filesystem does not support attributes\n")
+	-- Fatal unless declared (the Nix build sandbox refuses setxattr).
 	os.remove(path)
-	os.exit(0)
+	if os.getenv("XS_EXPECT_UNSUPPORTED") == "1" then os.exit(0) end
+	io.stderr:write("FAIL: filesystem does not support attributes; set XS_EXPECT_UNSUPPORTED=1 where that is expected\n")
+	os.exit(1)
 end
 check(st == XS_OK, "xs_set")
 

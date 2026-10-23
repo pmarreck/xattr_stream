@@ -5,11 +5,15 @@ limits and evidence: docs/plan_context/.
 
 ## Next
 
-- [ ] Rust cross builds for all six platforms in `./build-all` (needs Rust standard libraries for the other targets in the flake, e.g. a rust-overlay toolchain)
-- [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) and decide LF-only text output (context: docs/plan_context/platform_verification.md)
+- [ ] Windows text output always CRLF (stdout and stderr; raw values stay byte-exact); `OS` env (linux|macos|mswin) selects the simulated platform, other values fall back to the compiled one; Windows CLIs accept `/name` switch spellings too; tests expect CRLF only when the effective OS is mswin, and `./test` runs the CLI suite under OS=mswin as well
+- [ ] Rust cross builds for all six platforms in `./build-all` through a rust-overlay toolchain (approved by BDFN 2026-10-23). Executable naming across languages stays `xattr-stream-rs` until a fleet-wide convention exists
+- [ ] Assess the sibling table renderer (tsv_to_ansi_table) as the listing-table dependency; report, do not adopt yet
+- [ ] Assess using the printable_binary Rust crate instead of the embedded glyph table; tell its agent that build scripts must not reach outside their crate
+- [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) (context: docs/plan_context/platform_verification.md)
 
 ## Recently done
 
+- [x] Attribute tests (Zig, CLI suite, differential, all consumers, Rust) fail on a filesystem that refuses attributes unless XS_EXPECT_UNSUPPORTED=1 declares it; `./test` fails on a missing tool instead of skipping; Nix check `test-unsupported-is-fatal` proves all nine suites fail undeclared in the sandbox. Measured: the sandbox's seccomp filter refuses setxattr in /build, /tmp, $out and tmpfs /dev/shm alike. Removed the unreachable Dec 2025 `tests/test.sh` (done 2026-10-23 13:48 EDT)
 - [x] Rust implementation verified natively on all six platforms by GitHub Actions run 39979476930 (824b713); counts in docs/plan_context/platform_verification.md (done 2026-10-23 11:45 EDT)
 - [x] Zig walker: entries a listing reports as `.unknown` (no d_type: XFS without ftype, some network mounts) are resolved with lstat, so their directories are entered; Zig 0.16 maps DT_UNKNOWN to `.unknown`, which the walker had treated as a plain file (done 2026-10-23 11:40 EDT)
 - [x] Debug builds of both CLIs print a yellow `DEBUG BUILD!` on stderr (silenced by a non-empty MUTE_DEBUG_STATUS); `./test` checks Debug and release builds of each (done 2026-10-23 11:31 EDT)
