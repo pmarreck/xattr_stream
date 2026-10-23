@@ -229,3 +229,22 @@ test "the visitor can stop the walk; a non-directory root is visited alone; a mi
 	try expectEqualStrings("0 other r/f1\n", single);
 	try std.testing.expectError(error.NotFound, run("missing", .{}, null));
 }
+
+test "a listing that cannot tell an entry's type falls back to lstat; known types skip it" {
+	// Filesystems without d_type (XFS without ftype, some network mounts)
+	// report every entry as unknown; treating that as "other" would list a
+	// directory but never enter it.
+	const Fake = struct {
+		var calls: usize = 0;
+		fn lstat(_: void) walk.Error!walk.Kind {
+			calls += 1;
+			return .directory;
+		}
+	};
+	Fake.calls = 0;
+	try expectEqual(walk.Kind.directory, try walk.listedKind(.unknown, {}, Fake.lstat));
+	try expectEqual(@as(usize, 1), Fake.calls);
+	const known = [_]struct { std.Io.File.Kind, walk.Kind }{ .{ .directory, .directory }, .{ .sym_link, .symlink }, .{ .file, .other }, .{ .named_pipe, .other } };
+	for (known) |k| try expectEqual(k[1], try walk.listedKind(k[0], {}, Fake.lstat));
+	try expectEqual(@as(usize, 1), Fake.calls);
+}

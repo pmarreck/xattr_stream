@@ -7,11 +7,11 @@ limits and evidence: docs/plan_context/.
 
 - [ ] Rust implementation: confirm the native CI runs (macOS ARM/Intel, Linux ARM/x64 through `./test`; Windows x64/ARM through `cargo test`)
 - [ ] Rust cross builds for all six platforms in `./build-all` (needs Rust standard libraries for the other targets in the flake, e.g. a rust-overlay toolchain)
-- [ ] Zig walker: check how std.Io.Dir iteration reports entries on filesystems without d_type; if they come back as `.unknown`, directories would be listed but never entered (the Rust walker falls back to lstat)
 - [ ] Windows: port the Bash CLI suite (Git Bash path rewriting, forbidden `|`, `\` separators) and decide LF-only text output (context: docs/plan_context/platform_verification.md)
 
 ## Recently done
 
+- [x] Zig walker: entries a listing reports as `.unknown` (no d_type: XFS without ftype, some network mounts) are resolved with lstat, so their directories are entered; Zig 0.16 maps DT_UNKNOWN to `.unknown`, which the walker had treated as a plain file (done 2026-10-23 11:40 EDT)
 - [x] Debug builds of both CLIs print a yellow `DEBUG BUILD!` on stderr (silenced by a non-empty MUTE_DEBUG_STATUS); `./test` checks Debug and release builds of each (done 2026-10-23 11:31 EDT)
 - [x] Rust implementation in `rust/` (core, same C ABI, CLI `xattr-stream-rs`, no crates): CLI suite 305/305, differential 834 cases with 0 mismatches (catches planted one-character bugs), C and LuaJIT consumers over the Rust library, `nix build .#rust` (done 2026-10-23 11:25 EDT)
 - [x] Found by the port and fixed in the C CLI too: numeric options take plain digits (`--cols=-1` wrapped to 2^64-1 and table padding ran practically forever); `--limit 18446744073709551615` no longer hangs `put` (done 2026-10-23 11:10 EDT)

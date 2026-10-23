@@ -163,6 +163,23 @@ fn kindFromFile(k: std.Io.File.Kind) Kind {
 	};
 }
 
+/// An entry's kind as the directory listing reports it, or, when the listing
+/// cannot tell (`.unknown`: filesystems without d_type, such as XFS without
+/// ftype), as `lstat(ctx)` reports it. Without the fallback a directory there
+/// would be listed but never entered.
+pub fn listedKind(listed: std.Io.File.Kind, ctx: anytype, comptime lstat: fn (@TypeOf(ctx)) Error!Kind) Error!Kind {
+	if (listed == .unknown) return lstat(ctx);
+	return kindFromFile(listed);
+}
+
+const EntryPath = struct { allocator: std.mem.Allocator, dir: []const u8, name: []const u8 };
+
+fn lstatEntry(e: EntryPath) Error!Kind {
+	const p = std.fs.path.join(e.allocator, &.{ e.dir, e.name }) catch return error.OutOfMemory;
+	defer e.allocator.free(p);
+	return FsLister.kindOf(p);
+}
+
 pub const FsLister = struct {
 	pub fn kindOf(path: []const u8) Error!Kind {
 		const st = std.Io.Dir.cwd().statFile(libIo(), path, .{ .follow_symlinks = false }) catch |e| return mapIoError(e);
@@ -178,8 +195,9 @@ pub const FsLister = struct {
 		// The handle was just opened, so no rewind (lseek) is needed.
 		var it = dir.iterateAssumeFirstIteration();
 		while (it.next(io) catch |e| return mapIoError(e)) |entry| {
+			const kind = try listedKind(entry.kind, EntryPath{ .allocator = allocator, .dir = path, .name = entry.name }, lstatEntry);
 			const name = allocator.dupe(u8, entry.name) catch return error.OutOfMemory;
-			out.append(allocator, .{ .name = name, .kind = kindFromFile(entry.kind) }) catch {
+			out.append(allocator, .{ .name = name, .kind = kind }) catch {
 				allocator.free(name);
 				return error.OutOfMemory;
 			};
